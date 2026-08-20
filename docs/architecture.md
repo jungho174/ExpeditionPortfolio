@@ -2,9 +2,9 @@
 
 ## 현재 상태와 설계 원칙
 
-현재 프로젝트에는 Third Person 템플릿의 `AExpeditionPortfolioCharacter`, `AExpeditionPortfolioPlayerController`, `AExpeditionPortfolioGameMode`와 여러 템플릿 Variant가 있다. 프로젝트 고유의 전투 관리자, 전투 참가자 Component, 스킬 데이터 클래스는 아직 확정되거나 구현되지 않았다.
+현재 프로젝트에는 Third Person 템플릿의 `AExpeditionPortfolioCharacter`, `AExpeditionPortfolioPlayerController`, `AExpeditionPortfolioGameMode`와 여러 템플릿 Variant가 있다. 전투 상태를 소유하는 `UBattleCoordinator`는 `UWorldSubsystem`으로 확정됐고, `ABattleEncounterTrigger`가 필드 조우 감지를 담당한다. 전투 참가자 Component와 스킬 데이터 클래스는 아직 확정되거나 구현되지 않았다.
 
-이 문서의 `BattleCoordinator`, `BattleManager`, `CombatantComponent` 등의 이름은 책임을 설명하기 위한 후보명이다. 실제 클래스명, 상속 구조와 배치 위치는 첫 Vertical Slice 구현 전에 작은 실험과 테스트를 거쳐 확정한다.
+이 문서의 `CombatantComponent`와 데이터 클래스 이름은 책임을 설명하기 위한 후보명이다. 실제 클래스명, 상속 구조와 배치 위치는 구현 전 작은 실험과 테스트를 거쳐 확정한다.
 
 ## Exploration과 Combat 영역 분리
 
@@ -15,9 +15,9 @@ Exploration은 캐릭터 이동, 카메라, 필드 상호작용, 조우 감지�
 - 맵 전환, 같은 맵 안의 전투 공간 이동, 별도 전투 Level 사용 여부는 아직 확정하지 않는다.
 - 전투 중 필드 Actor를 숨기거나 정지시키는 정책도 Vertical Slice의 전환 방식이 결정된 뒤 확정한다.
 
-## BattleCoordinator 또는 BattleManager의 책임
+## BattleCoordinator의 책임
 
-전투 흐름을 조정하는 단일 객체가 필요하다. 후보 구현은 전투 전용 `Actor`, `WorldSubsystem`, 또는 다른 수명 관리 객체이며 아직 확정하지 않는다. 이 객체의 책임은 다음 범위로 제한한다.
+`UBattleCoordinator`는 `UWorldSubsystem`으로서 Game/PIE World마다 하나씩 생성되고 전투 흐름을 조정한다. 이 객체의 책임은 다음 범위로 제한한다.
 
 - 전투 시작 요청을 검증하고 참가자를 등록한다.
 - 현재 전투 상태와 턴 주체를 소유한다.
@@ -28,6 +28,10 @@ Exploration은 캐릭터 이동, 카메라, 필드 상호작용, 조우 감지�
 - 전투 종료 시 임시 상태를 정리하고 Exploration 복귀를 알린다.
 
 이 객체는 Widget의 표시 방식, Animation 세부 연출, 개별 캐릭터의 이동 구현을 소유하지 않는다.
+
+## 필드 조우 감지
+
+`ABattleEncounterTrigger`는 `UBoxComponent`의 Overlap Event로 로컬 플레이어 Pawn을 감지한다. Trigger는 `RequestBattleStart()`를 통해 조우 의도만 전달하며 `TryTransitionTo()`를 직접 호출하지 않는다. 요청이 성공한 경우에만 Collision을 비활성화해 같은 조우가 중복 실행되지 않도록 한다. Trigger는 전투 상태, 참가자 데이터, 전투 연출을 소유하지 않는다.
 
 ## CombatantComponent의 책임
 

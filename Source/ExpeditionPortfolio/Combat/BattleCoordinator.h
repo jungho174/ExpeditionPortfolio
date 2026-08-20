@@ -7,6 +7,9 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "BattleCoordinator.generated.h"
 
+class AActor;
+class APawn;
+
 DECLARE_LOG_CATEGORY_EXTERN(LogBattleCoordinator, Log, All);
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(
@@ -25,6 +28,10 @@ public:
 
 	EBattleState GetCurrentState() const { return CurrentState; }
 	bool TryTransitionTo(EBattleState NewState);
+	bool RequestBattleStart(AActor* EncounterSource, APawn* PlayerPawn);
+
+	AActor* GetActiveEncounterSource() const { return ActiveEncounterSource.Get(); }
+	APawn* GetActivePlayerPawn() const { return ActivePlayerPawn.Get(); }
 
 	FOnBattleStateChanged& OnBattleStateChanged() { return BattleStateChanged; }
 
@@ -35,5 +42,7 @@ private:
 	bool IsTransitionAllowed(EBattleState NewState) const;
 
 	EBattleState CurrentState = EBattleState::Exploration;
+	TWeakObjectPtr<AActor> ActiveEncounterSource;
+	TWeakObjectPtr<APawn> ActivePlayerPawn;
 	FOnBattleStateChanged BattleStateChanged;
 };

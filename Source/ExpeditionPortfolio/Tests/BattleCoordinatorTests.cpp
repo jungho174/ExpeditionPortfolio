@@ -5,6 +5,8 @@
 #include "Combat/BattleCoordinator.h"
 
 #include "Engine/World.h"
+#include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
 #include "Misc/AutomationTest.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
@@ -40,6 +42,11 @@ namespace
 		UBattleCoordinator* GetCoordinator() const
 		{
 			return World != nullptr ? World->GetSubsystem<UBattleCoordinator>() : nullptr;
+		}
+
+		UWorld* GetWorld() const
+		{
+			return World;
 		}
 
 	private:
@@ -223,6 +230,115 @@ bool FBattleCoordinatorDelegateNotificationsTest::RunTest(const FString& Paramet
 			TEXT("Second notification should report PlayerCommand as NewState"),
 			Notifications[1].Value,
 			EBattleState::PlayerCommand);
+	}
+
+	Coordinator->OnBattleStateChanged().Remove(DelegateHandle);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBattleCoordinatorBattleStartRequestTest,
+	"ExpeditionPortfolio.Combat.BattleCoordinator.BattleStartRequest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBattleCoordinatorBattleStartRequestTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FScopedBattleTestWorld TestWorld;
+	UBattleCoordinator* Coordinator = TestWorld.GetCoordinator();
+	UWorld* World = TestWorld.GetWorld();
+
+	if (!TestNotNull(TEXT("BattleCoordinator should exist for a Game world"), Coordinator)
+		|| !TestNotNull(TEXT("Test world should exist"), World))
+	{
+		return false;
+	}
+
+	AActor* EncounterSource = World->SpawnActor<AActor>();
+	APawn* PlayerPawn = World->SpawnActor<APawn>();
+	AActor* OtherEncounterSource = World->SpawnActor<AActor>();
+	APawn* OtherPlayerPawn = World->SpawnActor<APawn>();
+
+	if (!TestNotNull(TEXT("Encounter source should spawn"), EncounterSource)
+		|| !TestNotNull(TEXT("Player pawn should spawn"), PlayerPawn)
+		|| !TestNotNull(TEXT("Other encounter source should spawn"), OtherEncounterSource)
+		|| !TestNotNull(TEXT("Other player pawn should spawn"), OtherPlayerPawn))
+	{
+		return false;
+	}
+
+	TArray<TPair<EBattleState, EBattleState>> Notifications;
+	const FDelegateHandle DelegateHandle = Coordinator->OnBattleStateChanged().AddLambda(
+		[&Notifications](const EBattleState PreviousState, const EBattleState NewState)
+		{
+			Notifications.Emplace(PreviousState, NewState);
+		});
+
+	AddExpectedError(
+		TEXT("Rejected battle start request"),
+		EAutomationExpectedErrorFlags::Contains,
+		3);
+
+	TestFalse(
+		TEXT("A null encounter source should be rejected"),
+		Coordinator->RequestBattleStart(nullptr, PlayerPawn));
+	TestFalse(
+		TEXT("A null player pawn should be rejected"),
+		Coordinator->RequestBattleStart(EncounterSource, nullptr));
+	TestEqual(
+		TEXT("Rejected requests should leave the state at Exploration"),
+		Coordinator->GetCurrentState(),
+		EBattleState::Exploration);
+	TestNull(
+		TEXT("Rejected requests should not set an active encounter"),
+		Coordinator->GetActiveEncounterSource());
+	TestNull(
+		TEXT("Rejected requests should not set an active player"),
+		Coordinator->GetActivePlayerPawn());
+
+	TestTrue(
+		TEXT("A valid battle start request should succeed"),
+		Coordinator->RequestBattleStart(EncounterSource, PlayerPawn));
+	TestEqual(
+		TEXT("A valid battle start request should enter BattleIntro"),
+		Coordinator->GetCurrentState(),
+		EBattleState::BattleIntro);
+	TestEqual(
+		TEXT("The active encounter should match the accepted source"),
+		Coordinator->GetActiveEncounterSource(),
+		EncounterSource);
+	TestEqual(
+		TEXT("The active player should match the accepted pawn"),
+		Coordinator->GetActivePlayerPawn(),
+		PlayerPawn);
+
+	TestFalse(
+		TEXT("A second battle start request should be rejected"),
+		Coordinator->RequestBattleStart(OtherEncounterSource, OtherPlayerPawn));
+	TestEqual(
+		TEXT("A rejected second request should preserve the active encounter"),
+		Coordinator->GetActiveEncounterSource(),
+		EncounterSource);
+	TestEqual(
+		TEXT("A rejected second request should preserve the active player"),
+		Coordinator->GetActivePlayerPawn(),
+		PlayerPawn);
+	TestEqual(
+		TEXT("Only the successful request should notify listeners"),
+		Notifications.Num(),
+		1);
+
+	if (Notifications.Num() == 1)
+	{
+		TestEqual(
+			TEXT("The battle start notification should report Exploration as PreviousState"),
+			Notifications[0].Key,
+			EBattleState::Exploration);
+		TestEqual(
+			TEXT("The battle start notification should report BattleIntro as NewState"),
+			Notifications[0].Value,
+			EBattleState::BattleIntro);
 	}
 
 	Coordinator->OnBattleStateChanged().Remove(DelegateHandle);
