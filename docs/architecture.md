@@ -2,9 +2,9 @@
 
 ## 현재 상태와 설계 원칙
 
-현재 프로젝트에는 Third Person 템플릿의 `AExpeditionPortfolioCharacter`, `AExpeditionPortfolioPlayerController`, `AExpeditionPortfolioGameMode`와 여러 템플릿 Variant가 있다. 전투 상태를 소유하는 `UBattleCoordinator`는 `UWorldSubsystem`으로 확정됐고, `ABattleEncounterTrigger`가 필드 조우 감지를 담당한다. 전투 참가자 Component와 스킬 데이터 클래스는 아직 확정되거나 구현되지 않았다.
+현재 프로젝트에는 Third Person 템플릿의 `AExpeditionPortfolioCharacter`, `AExpeditionPortfolioPlayerController`, `AExpeditionPortfolioGameMode`와 여러 템플릿 Variant가 있다. 전투 상태를 소유하는 `UBattleCoordinator`는 `UWorldSubsystem`으로 확정됐고, `ABattleEncounterTrigger`가 필드 조우 감지를 담당한다. `UCombatantComponent`는 최소 HP, Damage와 전투 불능 상태를 담당하며, 스킬 데이터 클래스는 아직 확정되거나 구현되지 않았다.
 
-이 문서의 `CombatantComponent`와 데이터 클래스 이름은 책임을 설명하기 위한 후보명이다. 실제 클래스명, 상속 구조와 배치 위치는 구현 전 작은 실험과 테스트를 거쳐 확정한다.
+데이터 클래스 이름은 책임을 설명하기 위한 후보명이다. 실제 클래스명, 상속 구조와 배치 위치는 구현 전 작은 실험과 테스트를 거쳐 확정한다.
 
 ## Exploration과 Combat 영역 분리
 
@@ -35,15 +35,13 @@ Exploration은 캐릭터 이동, 카메라, 필드 상호작용, 조우 감지�
 
 ## CombatantComponent의 책임
 
-`CombatantComponent`는 전투에 참여할 Actor가 공통 전투 기능을 제공하도록 하는 후보 Component다. 다음 책임을 고려한다.
+`UCombatantComponent`는 전투에 참여할 Actor가 공통 전투 기능을 제공하도록 하는 `UActorComponent`다. 현재는 다음 최소 책임을 구현한다.
 
 - Max HP, Current HP와 생존 여부 관리
-- 피해, 회복, 방어 결과 적용
-- 사용 가능한 Action/Skill 목록 제공
-- 전투 참가자 식별과 팀 또는 진영 정보 제공
-- HP 변경, 사망, Action 완료 등의 Delegate 발행
+- 양수 Damage 적용과 HP의 0 하한 처리
+- HP 변경과 전투 불능 Delegate 발행
 
-턴 전체 흐름, UI Widget 참조, 카메라 연출은 Component에 넣지 않는다. 스탯 확장과 상태 이상은 Vertical Slice 이후 필요성이 확인될 때 추가한다.
+회복, 방어 결과, Action/Skill 목록, 팀 또는 진영 정보는 필요한 단계에서 확장한다. 턴 전체 흐름, UI Widget 참조, 카메라 연출은 Component에 넣지 않는다. 스탯 확장과 상태 이상은 Vertical Slice 이후 필요성이 확인될 때 추가한다.
 
 ## UI와 게임 로직의 분리
 
