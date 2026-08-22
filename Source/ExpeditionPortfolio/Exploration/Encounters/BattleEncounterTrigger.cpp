@@ -55,7 +55,7 @@ void ABattleEncounterTrigger::HandleEncounterBeginOverlap(
 	}
 
 	UBattleCoordinator* BattleCoordinator = GetWorld()->GetSubsystem<UBattleCoordinator>();
-	if (BattleCoordinator == nullptr || !BattleCoordinator->RequestBattleStart(this, OverlappingPawn))
+	if (BattleCoordinator == nullptr || !BattleCoordinator->RequestBattleStart(this, OverlappingPawn, EnemyActor))
 	{
 		return;
 	}

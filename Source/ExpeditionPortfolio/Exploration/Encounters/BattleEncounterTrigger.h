@@ -33,5 +33,8 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Encounter", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UBoxComponent> EncounterVolume;
 
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Encounter", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<AActor> EnemyActor;
+
 	bool bEncounterTriggered = false;
 };

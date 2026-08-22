@@ -27,11 +27,15 @@ Exploration은 캐릭터 이동, 카메라, 필드 상호작용, 조우 감지�
 - 행동 종료 시 생존 상태를 확인하고 Victory 또는 Defeat를 판정한다.
 - 전투 종료 시 임시 상태를 정리하고 Exploration 복귀를 알린다.
 
+현재 1대1 Vertical Slice에서는 `RequestBattleStart()`가 조우 출처, Player Pawn, Enemy Actor의 유효성과 양쪽 `UCombatantComponent` 존재 여부를 검증한다. 승인된 Actor와 Component는 Coordinator가 생명주기를 소유하지 않도록 `TWeakObjectPtr`로 보관한다.
+
+`BattleIntro`에 비동기 배치나 연출이 아직 없으므로 승인 직후 `PlayerCommand`까지 전환한다. Intro 연출이 구현되면 이 임시 즉시 전환을 연출 완료 Event 기반 전환으로 교체한다.
+
 이 객체는 Widget의 표시 방식, Animation 세부 연출, 개별 캐릭터의 이동 구현을 소유하지 않는다.
 
 ## 필드 조우 감지
 
-`ABattleEncounterTrigger`는 `UBoxComponent`의 Overlap Event로 로컬 플레이어 Pawn을 감지한다. Trigger는 `RequestBattleStart()`를 통해 조우 의도만 전달하며 `TryTransitionTo()`를 직접 호출하지 않는다. 요청이 성공한 경우에만 Collision을 비활성화해 같은 조우가 중복 실행되지 않도록 한다. Trigger는 전투 상태, 참가자 데이터, 전투 연출을 소유하지 않는다.
+`ABattleEncounterTrigger`는 `UBoxComponent`의 Overlap Event로 로컬 플레이어 Pawn을 감지한다. Level에 배치된 각 Trigger는 `EditInstanceOnly`인 `EnemyActor` 참조로 해당 조우의 적을 명시한다. Trigger는 Player와 Enemy를 `RequestBattleStart()`에 전달해 조우 의도만 알리며 `TryTransitionTo()`를 직접 호출하지 않는다. 요청이 성공한 경우에만 Collision을 비활성화해 같은 조우가 중복 실행되지 않도록 한다. Trigger는 전투 상태, 참가자 데이터, 전투 연출을 소유하지 않는다.
 
 ## CombatantComponent의 책임
 

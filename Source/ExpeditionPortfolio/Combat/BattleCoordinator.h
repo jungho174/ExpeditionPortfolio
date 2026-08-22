@@ -9,6 +9,7 @@
 
 class AActor;
 class APawn;
+class UCombatantComponent;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogBattleCoordinator, Log, All);
 
@@ -28,10 +29,13 @@ public:
 
 	EBattleState GetCurrentState() const { return CurrentState; }
 	bool TryTransitionTo(EBattleState NewState);
-	bool RequestBattleStart(AActor* EncounterSource, APawn* PlayerPawn);
+	bool RequestBattleStart(AActor* EncounterSource, APawn* PlayerPawn, AActor* EnemyActor);
 
 	AActor* GetActiveEncounterSource() const { return ActiveEncounterSource.Get(); }
 	APawn* GetActivePlayerPawn() const { return ActivePlayerPawn.Get(); }
+	AActor* GetActiveEnemyActor() const { return ActiveEnemyActor.Get(); }
+	UCombatantComponent* GetPlayerCombatant() const { return PlayerCombatant.Get(); }
+	UCombatantComponent* GetEnemyCombatant() const { return EnemyCombatant.Get(); }
 
 	FOnBattleStateChanged& OnBattleStateChanged() { return BattleStateChanged; }
 
@@ -44,5 +48,8 @@ private:
 	EBattleState CurrentState = EBattleState::Exploration;
 	TWeakObjectPtr<AActor> ActiveEncounterSource;
 	TWeakObjectPtr<APawn> ActivePlayerPawn;
+	TWeakObjectPtr<AActor> ActiveEnemyActor;
+	TWeakObjectPtr<UCombatantComponent> PlayerCombatant;
+	TWeakObjectPtr<UCombatantComponent> EnemyCombatant;
 	FOnBattleStateChanged BattleStateChanged;
 };

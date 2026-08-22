@@ -2,6 +2,7 @@
 
 #include "Combat/BattleCoordinator.h"
 
+#include "Combat/CombatantComponent.h"
 #include "GameFramework/Pawn.h"
 #include "UObject/EnumProperty.h"
 
@@ -13,6 +14,9 @@ void UBattleCoordinator::Initialize(FSubsystemCollectionBase& Collection)
 	CurrentState = EBattleState::Exploration;
 	ActiveEncounterSource.Reset();
 	ActivePlayerPawn.Reset();
+	ActiveEnemyActor.Reset();
+	PlayerCombatant.Reset();
+	EnemyCombatant.Reset();
 }
 
 void UBattleCoordinator::Deinitialize()
@@ -20,6 +24,9 @@ void UBattleCoordinator::Deinitialize()
 	BattleStateChanged.Clear();
 	ActiveEncounterSource.Reset();
 	ActivePlayerPawn.Reset();
+	ActiveEnemyActor.Reset();
+	PlayerCombatant.Reset();
+	EnemyCombatant.Reset();
 	Super::Deinitialize();
 }
 
@@ -50,14 +57,23 @@ bool UBattleCoordinator::TryTransitionTo(const EBattleState NewState)
 	return true;
 }
 
-bool UBattleCoordinator::RequestBattleStart(AActor* EncounterSource, APawn* PlayerPawn)
+bool UBattleCoordinator::RequestBattleStart(AActor* EncounterSource, APawn* PlayerPawn, AActor* EnemyActor)
 {
-	if (!IsValid(EncounterSource) || !IsValid(PlayerPawn))
+	if (!IsValid(EncounterSource) || !IsValid(PlayerPawn) || !IsValid(EnemyActor))
 	{
 		UE_LOG(
 			LogBattleCoordinator,
 			Warning,
-			TEXT("Rejected battle start request: EncounterSource and PlayerPawn must be valid."));
+			TEXT("Rejected battle start request: EncounterSource, PlayerPawn, and EnemyActor must be valid."));
+		return false;
+	}
+
+	if (PlayerPawn == EnemyActor)
+	{
+		UE_LOG(
+			LogBattleCoordinator,
+			Warning,
+			TEXT("Rejected battle start request: PlayerPawn and EnemyActor must be different actors."));
 		return false;
 	}
 
@@ -71,7 +87,11 @@ bool UBattleCoordinator::RequestBattleStart(AActor* EncounterSource, APawn* Play
 		return false;
 	}
 
-	if (ActiveEncounterSource.IsValid() || ActivePlayerPawn.IsValid())
+	if (ActiveEncounterSource.IsValid()
+		|| ActivePlayerPawn.IsValid()
+		|| ActiveEnemyActor.IsValid()
+		|| PlayerCombatant.IsValid()
+		|| EnemyCombatant.IsValid())
 	{
 		UE_LOG(
 			LogBattleCoordinator,
@@ -80,13 +100,58 @@ bool UBattleCoordinator::RequestBattleStart(AActor* EncounterSource, APawn* Play
 		return false;
 	}
 
+	UCombatantComponent* FoundPlayerCombatant = PlayerPawn->FindComponentByClass<UCombatantComponent>();
+	UCombatantComponent* FoundEnemyCombatant = EnemyActor->FindComponentByClass<UCombatantComponent>();
+	if (!IsValid(FoundPlayerCombatant) || !IsValid(FoundEnemyCombatant))
+	{
+		UE_LOG(
+			LogBattleCoordinator,
+			Warning,
+			TEXT("Rejected battle start request: Player '%s' and Enemy '%s' must each have a CombatantComponent."),
+			*GetNameSafe(PlayerPawn),
+			*GetNameSafe(EnemyActor));
+		return false;
+	}
+
+	if (FoundPlayerCombatant == FoundEnemyCombatant)
+	{
+		UE_LOG(
+			LogBattleCoordinator,
+			Warning,
+			TEXT("Rejected battle start request: Player and Enemy must use different CombatantComponents."));
+		return false;
+	}
+
 	ActiveEncounterSource = EncounterSource;
 	ActivePlayerPawn = PlayerPawn;
+	ActiveEnemyActor = EnemyActor;
+	PlayerCombatant = FoundPlayerCombatant;
+	EnemyCombatant = FoundEnemyCombatant;
 
 	if (!TryTransitionTo(EBattleState::BattleIntro))
 	{
 		ActiveEncounterSource.Reset();
 		ActivePlayerPawn.Reset();
+		ActiveEnemyActor.Reset();
+		PlayerCombatant.Reset();
+		EnemyCombatant.Reset();
+		return false;
+	}
+
+	UE_LOG(
+		LogBattleCoordinator,
+		Log,
+		TEXT("Battle participants registered: Player='%s', Enemy='%s'."),
+		*GetNameSafe(PlayerPawn),
+		*GetNameSafe(EnemyActor));
+
+	// BattleIntro has no asynchronous setup or presentation yet, so complete it immediately.
+	if (!TryTransitionTo(EBattleState::PlayerCommand))
+	{
+		UE_LOG(
+			LogBattleCoordinator,
+			Error,
+			TEXT("Battle start entered BattleIntro but could not continue to PlayerCommand."));
 		return false;
 	}
 

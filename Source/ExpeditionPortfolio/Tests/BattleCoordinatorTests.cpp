@@ -3,6 +3,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Combat/BattleCoordinator.h"
+#include "Combat/CombatantComponent.h"
 
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
@@ -52,6 +53,14 @@ namespace
 	private:
 		UWorld* World = nullptr;
 	};
+
+	UCombatantComponent* AddCombatantComponent(AActor* Owner)
+	{
+		UCombatantComponent* Combatant = NewObject<UCombatantComponent>(Owner);
+		Owner->AddInstanceComponent(Combatant);
+		Combatant->RegisterComponent();
+		return Combatant;
+	}
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -257,13 +266,34 @@ bool FBattleCoordinatorBattleStartRequestTest::RunTest(const FString& Parameters
 
 	AActor* EncounterSource = World->SpawnActor<AActor>();
 	APawn* PlayerPawn = World->SpawnActor<APawn>();
+	AActor* EnemyActor = World->SpawnActor<AActor>();
+	APawn* MissingPlayerCombatantPawn = World->SpawnActor<APawn>();
+	AActor* MissingEnemyCombatantActor = World->SpawnActor<AActor>();
 	AActor* OtherEncounterSource = World->SpawnActor<AActor>();
 	APawn* OtherPlayerPawn = World->SpawnActor<APawn>();
+	AActor* OtherEnemyActor = World->SpawnActor<AActor>();
 
 	if (!TestNotNull(TEXT("Encounter source should spawn"), EncounterSource)
 		|| !TestNotNull(TEXT("Player pawn should spawn"), PlayerPawn)
+		|| !TestNotNull(TEXT("Enemy actor should spawn"), EnemyActor)
+		|| !TestNotNull(TEXT("Pawn without a combatant should spawn"), MissingPlayerCombatantPawn)
+		|| !TestNotNull(TEXT("Enemy without a combatant should spawn"), MissingEnemyCombatantActor)
 		|| !TestNotNull(TEXT("Other encounter source should spawn"), OtherEncounterSource)
-		|| !TestNotNull(TEXT("Other player pawn should spawn"), OtherPlayerPawn))
+		|| !TestNotNull(TEXT("Other player pawn should spawn"), OtherPlayerPawn)
+		|| !TestNotNull(TEXT("Other enemy actor should spawn"), OtherEnemyActor))
+	{
+		return false;
+	}
+
+	UCombatantComponent* PlayerCombatant = AddCombatantComponent(PlayerPawn);
+	UCombatantComponent* EnemyCombatant = AddCombatantComponent(EnemyActor);
+	UCombatantComponent* OtherPlayerCombatant = AddCombatantComponent(OtherPlayerPawn);
+	UCombatantComponent* OtherEnemyCombatant = AddCombatantComponent(OtherEnemyActor);
+
+	if (!TestNotNull(TEXT("Player combatant should be added"), PlayerCombatant)
+		|| !TestNotNull(TEXT("Enemy combatant should be added"), EnemyCombatant)
+		|| !TestNotNull(TEXT("Other player combatant should be added"), OtherPlayerCombatant)
+		|| !TestNotNull(TEXT("Other enemy combatant should be added"), OtherEnemyCombatant))
 	{
 		return false;
 	}
@@ -278,14 +308,27 @@ bool FBattleCoordinatorBattleStartRequestTest::RunTest(const FString& Parameters
 	AddExpectedError(
 		TEXT("Rejected battle start request"),
 		EAutomationExpectedErrorFlags::Contains,
-		3);
+		7);
 
 	TestFalse(
 		TEXT("A null encounter source should be rejected"),
-		Coordinator->RequestBattleStart(nullptr, PlayerPawn));
+		Coordinator->RequestBattleStart(nullptr, PlayerPawn, EnemyActor));
 	TestFalse(
 		TEXT("A null player pawn should be rejected"),
-		Coordinator->RequestBattleStart(EncounterSource, nullptr));
+		Coordinator->RequestBattleStart(EncounterSource, nullptr, EnemyActor));
+	TestFalse(
+		TEXT("A null enemy actor should be rejected"),
+		Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, nullptr));
+	TestFalse(
+		TEXT("The same actor cannot be both player and enemy"),
+		Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, PlayerPawn));
+	TestFalse(
+		TEXT("A player without CombatantComponent should be rejected"),
+		Coordinator->RequestBattleStart(EncounterSource, MissingPlayerCombatantPawn, EnemyActor));
+	TestFalse(
+		TEXT("An enemy without CombatantComponent should be rejected"),
+		Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, MissingEnemyCombatantActor));
+
 	TestEqual(
 		TEXT("Rejected requests should leave the state at Exploration"),
 		Coordinator->GetCurrentState(),
@@ -296,14 +339,27 @@ bool FBattleCoordinatorBattleStartRequestTest::RunTest(const FString& Parameters
 	TestNull(
 		TEXT("Rejected requests should not set an active player"),
 		Coordinator->GetActivePlayerPawn());
+	TestNull(
+		TEXT("Rejected requests should not set an active enemy"),
+		Coordinator->GetActiveEnemyActor());
+	TestNull(
+		TEXT("Rejected requests should not set a player combatant"),
+		Coordinator->GetPlayerCombatant());
+	TestNull(
+		TEXT("Rejected requests should not set an enemy combatant"),
+		Coordinator->GetEnemyCombatant());
+	TestEqual(
+		TEXT("Rejected requests should not notify listeners"),
+		Notifications.Num(),
+		0);
 
 	TestTrue(
 		TEXT("A valid battle start request should succeed"),
-		Coordinator->RequestBattleStart(EncounterSource, PlayerPawn));
+		Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
 	TestEqual(
-		TEXT("A valid battle start request should enter BattleIntro"),
+		TEXT("The placeholder BattleIntro should continue to PlayerCommand"),
 		Coordinator->GetCurrentState(),
-		EBattleState::BattleIntro);
+		EBattleState::PlayerCommand);
 	TestEqual(
 		TEXT("The active encounter should match the accepted source"),
 		Coordinator->GetActiveEncounterSource(),
@@ -312,10 +368,22 @@ bool FBattleCoordinatorBattleStartRequestTest::RunTest(const FString& Parameters
 		TEXT("The active player should match the accepted pawn"),
 		Coordinator->GetActivePlayerPawn(),
 		PlayerPawn);
+	TestEqual(
+		TEXT("The active enemy should match the accepted actor"),
+		Coordinator->GetActiveEnemyActor(),
+		EnemyActor);
+	TestEqual(
+		TEXT("The player combatant should match the registered component"),
+		Coordinator->GetPlayerCombatant(),
+		PlayerCombatant);
+	TestEqual(
+		TEXT("The enemy combatant should match the registered component"),
+		Coordinator->GetEnemyCombatant(),
+		EnemyCombatant);
 
 	TestFalse(
 		TEXT("A second battle start request should be rejected"),
-		Coordinator->RequestBattleStart(OtherEncounterSource, OtherPlayerPawn));
+		Coordinator->RequestBattleStart(OtherEncounterSource, OtherPlayerPawn, OtherEnemyActor));
 	TestEqual(
 		TEXT("A rejected second request should preserve the active encounter"),
 		Coordinator->GetActiveEncounterSource(),
@@ -325,20 +393,40 @@ bool FBattleCoordinatorBattleStartRequestTest::RunTest(const FString& Parameters
 		Coordinator->GetActivePlayerPawn(),
 		PlayerPawn);
 	TestEqual(
-		TEXT("Only the successful request should notify listeners"),
+		TEXT("A rejected second request should preserve the active enemy"),
+		Coordinator->GetActiveEnemyActor(),
+		EnemyActor);
+	TestEqual(
+		TEXT("A rejected second request should preserve the player combatant"),
+		Coordinator->GetPlayerCombatant(),
+		PlayerCombatant);
+	TestEqual(
+		TEXT("A rejected second request should preserve the enemy combatant"),
+		Coordinator->GetEnemyCombatant(),
+		EnemyCombatant);
+	TestEqual(
+		TEXT("Only the successful request should notify each successful transition"),
 		Notifications.Num(),
-		1);
+		2);
 
-	if (Notifications.Num() == 1)
+	if (Notifications.Num() == 2)
 	{
 		TestEqual(
-			TEXT("The battle start notification should report Exploration as PreviousState"),
+			TEXT("The first battle start notification should begin at Exploration"),
 			Notifications[0].Key,
 			EBattleState::Exploration);
 		TestEqual(
-			TEXT("The battle start notification should report BattleIntro as NewState"),
+			TEXT("The first battle start notification should enter BattleIntro"),
 			Notifications[0].Value,
 			EBattleState::BattleIntro);
+		TestEqual(
+			TEXT("The second battle start notification should begin at BattleIntro"),
+			Notifications[1].Key,
+			EBattleState::BattleIntro);
+		TestEqual(
+			TEXT("The second battle start notification should enter PlayerCommand"),
+			Notifications[1].Value,
+			EBattleState::PlayerCommand);
 	}
 
 	Coordinator->OnBattleStateChanged().Remove(DelegateHandle);
