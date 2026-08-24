@@ -12,26 +12,33 @@ void UBattleCoordinator::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	CurrentState = EBattleState::Exploration;
-	ActiveEncounterSource.Reset();
-	ActivePlayerPawn.Reset();
-	ActiveEnemyActor.Reset();
-	PlayerCombatant.Reset();
-	EnemyCombatant.Reset();
+	ClearBattleContext();
+	bTransitionInProgress = false;
+	bActionInProgress = false;
 }
 
 void UBattleCoordinator::Deinitialize()
 {
 	BattleStateChanged.Clear();
-	ActiveEncounterSource.Reset();
-	ActivePlayerPawn.Reset();
-	ActiveEnemyActor.Reset();
-	PlayerCombatant.Reset();
-	EnemyCombatant.Reset();
+	ClearBattleContext();
+	bTransitionInProgress = false;
+	bActionInProgress = false;
 	Super::Deinitialize();
 }
 
 bool UBattleCoordinator::TryTransitionTo(const EBattleState NewState)
 {
+	if (bTransitionInProgress)
+	{
+		UE_LOG(
+			LogBattleCoordinator,
+			Warning,
+			TEXT("Rejected reentrant battle state transition: %s -> %s"),
+			*UEnum::GetValueAsString(CurrentState),
+			*UEnum::GetValueAsString(NewState));
+		return false;
+	}
+
 	if (!IsTransitionAllowed(NewState))
 	{
 		UE_LOG(
@@ -45,6 +52,7 @@ bool UBattleCoordinator::TryTransitionTo(const EBattleState NewState)
 
 	const EBattleState PreviousState = CurrentState;
 	CurrentState = NewState;
+	TGuardValue<bool> TransitionGuard(bTransitionInProgress, true);
 
 	UE_LOG(
 		LogBattleCoordinator,
@@ -59,6 +67,12 @@ bool UBattleCoordinator::TryTransitionTo(const EBattleState NewState)
 
 bool UBattleCoordinator::RequestBattleStart(AActor* EncounterSource, APawn* PlayerPawn, AActor* EnemyActor)
 {
+	if (bTransitionInProgress || bActionInProgress)
+	{
+		LogRejectedCommand(TEXT("RequestBattleStart"), TEXT("another battle operation is in progress"));
+		return false;
+	}
+
 	if (!IsValid(EncounterSource) || !IsValid(PlayerPawn) || !IsValid(EnemyActor))
 	{
 		UE_LOG(
@@ -121,6 +135,15 @@ bool UBattleCoordinator::RequestBattleStart(AActor* EncounterSource, APawn* Play
 			TEXT("Rejected battle start request: Player and Enemy must use different CombatantComponents."));
 		return false;
 	}
+	if (FoundPlayerCombatant->IsDefeated() || FoundEnemyCombatant->IsDefeated())
+	{
+		UE_LOG(
+			LogBattleCoordinator,
+			Warning,
+			TEXT("Rejected battle start request: Player and Enemy must both be able to act."));
+		return false;
+	}
+
 
 	ActiveEncounterSource = EncounterSource;
 	ActivePlayerPawn = PlayerPawn;
@@ -130,11 +153,7 @@ bool UBattleCoordinator::RequestBattleStart(AActor* EncounterSource, APawn* Play
 
 	if (!TryTransitionTo(EBattleState::BattleIntro))
 	{
-		ActiveEncounterSource.Reset();
-		ActivePlayerPawn.Reset();
-		ActiveEnemyActor.Reset();
-		PlayerCombatant.Reset();
-		EnemyCombatant.Reset();
+		ClearBattleContext();
 		return false;
 	}
 
@@ -152,10 +171,55 @@ bool UBattleCoordinator::RequestBattleStart(AActor* EncounterSource, APawn* Play
 			LogBattleCoordinator,
 			Error,
 			TEXT("Battle start entered BattleIntro but could not continue to PlayerCommand."));
+		ReturnToExploration();
 		return false;
 	}
 
 	return true;
+}
+
+bool UBattleCoordinator::RequestPlayerBasicAttack()
+{
+	if (bTransitionInProgress || bActionInProgress)
+	{
+		LogRejectedCommand(TEXT("RequestPlayerBasicAttack"), TEXT("another battle operation is in progress"));
+		return false;
+	}
+
+	if (CurrentState != EBattleState::PlayerCommand)
+	{
+		LogRejectedCommand(TEXT("RequestPlayerBasicAttack"), TEXT("current state is not PlayerCommand"));
+		return false;
+	}
+
+	if (!HasValidActiveBattle())
+	{
+		LogRejectedCommand(TEXT("RequestPlayerBasicAttack"), TEXT("active battle participants are invalid or defeated"));
+		ReturnToExploration();
+		return false;
+	}
+
+	TGuardValue<bool> ActionGuard(bActionInProgress, true);
+
+	if (!TryTransitionTo(EBattleState::PlayerAction))
+	{
+		return false;
+	}
+
+	if (!EnemyCombatant->ApplyDamage(PlayerBasicAttackDamage))
+	{
+		LogRejectedCommand(TEXT("RequestPlayerBasicAttack"), TEXT("player damage could not be applied"));
+		ReturnToExploration();
+		return false;
+	}
+
+	if (!TryTransitionTo(EBattleState::TurnEnd))
+	{
+		ReturnToExploration();
+		return false;
+	}
+
+	return ResolveTurnEnd(ECompletedAction::Player);
 }
 
 bool UBattleCoordinator::DoesSupportWorldType(const EWorldType::Type WorldType) const
@@ -176,9 +240,166 @@ bool UBattleCoordinator::IsTransitionAllowed(const EBattleState NewState) const
 		return NewState == EBattleState::BattleIntro;
 
 	case EBattleState::BattleIntro:
-		return NewState == EBattleState::PlayerCommand;
+		return NewState == EBattleState::PlayerCommand
+			|| NewState == EBattleState::ReturnToField;
+
+	case EBattleState::PlayerCommand:
+		return NewState == EBattleState::PlayerAction
+			|| NewState == EBattleState::ReturnToField;
+
+	case EBattleState::PlayerAction:
+		return NewState == EBattleState::TurnEnd
+			|| NewState == EBattleState::ReturnToField;
+
+	case EBattleState::EnemyTelegraph:
+		return NewState == EBattleState::EnemyAction
+			|| NewState == EBattleState::ReturnToField;
+
+	case EBattleState::EnemyAction:
+		return NewState == EBattleState::TurnEnd
+			|| NewState == EBattleState::ReturnToField;
+
+	case EBattleState::TurnEnd:
+		return NewState == EBattleState::Victory
+			|| NewState == EBattleState::Defeat
+			|| NewState == EBattleState::PlayerCommand
+			|| NewState == EBattleState::EnemyTelegraph
+			|| NewState == EBattleState::ReturnToField;
+
+	case EBattleState::Victory:
+	case EBattleState::Defeat:
+		return NewState == EBattleState::ReturnToField;
+
+	case EBattleState::ReturnToField:
+		return NewState == EBattleState::Exploration;
 
 	default:
 		return false;
 	}
+}
+
+bool UBattleCoordinator::HasValidActiveBattle() const
+{
+	return ActiveEncounterSource.IsValid()
+		&& ActivePlayerPawn.IsValid()
+		&& ActiveEnemyActor.IsValid()
+		&& PlayerCombatant.IsValid()
+		&& EnemyCombatant.IsValid()
+		&& !PlayerCombatant->IsDefeated()
+		&& !EnemyCombatant->IsDefeated();
+}
+
+bool UBattleCoordinator::ExecuteEnemyTurn()
+{
+	if (!HasValidActiveBattle())
+	{
+		ReturnToExploration();
+		return false;
+	}
+
+	if (!TryTransitionTo(EBattleState::EnemyAction))
+	{
+		ReturnToExploration();
+		return false;
+	}
+
+	if (!PlayerCombatant->ApplyDamage(EnemyBasicAttackDamage))
+	{
+		ReturnToExploration();
+		return false;
+	}
+
+	if (!TryTransitionTo(EBattleState::TurnEnd))
+	{
+		ReturnToExploration();
+		return false;
+	}
+
+	return ResolveTurnEnd(ECompletedAction::Enemy);
+}
+
+bool UBattleCoordinator::ResolveTurnEnd(const ECompletedAction CompletedAction)
+{
+	if (CurrentState != EBattleState::TurnEnd)
+	{
+		return false;
+	}
+
+	if (!ActivePlayerPawn.IsValid()
+		|| !ActiveEnemyActor.IsValid()
+		|| !PlayerCombatant.IsValid()
+		|| !EnemyCombatant.IsValid())
+	{
+		ReturnToExploration();
+		return false;
+	}
+
+	if (PlayerCombatant->IsDefeated())
+	{
+		return TryTransitionTo(EBattleState::Defeat);
+	}
+
+	if (EnemyCombatant->IsDefeated())
+	{
+		if (!TryTransitionTo(EBattleState::Victory))
+		{
+			return false;
+		}
+
+		return ReturnToExploration();
+	}
+
+	if (CompletedAction == ECompletedAction::Player)
+	{
+		if (!TryTransitionTo(EBattleState::EnemyTelegraph))
+		{
+			return false;
+		}
+
+		return ExecuteEnemyTurn();
+	}
+
+	return TryTransitionTo(EBattleState::PlayerCommand);
+}
+
+bool UBattleCoordinator::ReturnToExploration()
+{
+	if (CurrentState == EBattleState::Exploration)
+	{
+		ClearBattleContext();
+		return true;
+	}
+
+	if (CurrentState != EBattleState::ReturnToField
+		&& !TryTransitionTo(EBattleState::ReturnToField))
+	{
+		UE_LOG(
+			LogBattleCoordinator,
+			Error,
+			TEXT("Could not enter ReturnToField from %s."),
+			*UEnum::GetValueAsString(CurrentState));
+		return false;
+	}
+
+	ClearBattleContext();
+	return TryTransitionTo(EBattleState::Exploration);
+}
+
+void UBattleCoordinator::ClearBattleContext()
+{
+	ActiveEncounterSource.Reset();
+	ActivePlayerPawn.Reset();
+	ActiveEnemyActor.Reset();
+	PlayerCombatant.Reset();
+	EnemyCombatant.Reset();
+}
+
+void UBattleCoordinator::LogRejectedCommand(const TCHAR* CommandName, const TCHAR* Reason) const
+{
+	UE_LOG(
+		LogBattleCoordinator,
+		Warning,
+		TEXT("Rejected battle command '%s': %s."),
+		CommandName,
+		Reason);
 }

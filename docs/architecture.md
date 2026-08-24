@@ -15,6 +15,8 @@ Exploration은 캐릭터 이동, 카메라, 필드 상호작용, 조우 감지�
 - 맵 전환, 같은 맵 안의 전투 공간 이동, 별도 전투 Level 사용 여부는 아직 확정하지 않는다.
 - 전투 중 필드 Actor를 숨기거나 정지시키는 정책도 Vertical Slice의 전환 방식이 결정된 뒤 확정한다.
 
+`AExpeditionPortfolioPlayerController`는 상태 변경 Event를 구독하고 `Exploration`을 벗어날 때 탐험용 Enhanced Input Mapping Context와 이동/시점 입력을 비활성화한다. `ReturnToField -> Exploration`이 완료되면 같은 입력을 복원한다.
+
 ## BattleCoordinator의 책임
 
 `UBattleCoordinator`는 `UWorldSubsystem`으로서 Game/PIE World마다 하나씩 생성되고 전투 흐름을 조정한다. 이 객체의 책임은 다음 범위로 제한한다.
@@ -27,9 +29,15 @@ Exploration은 캐릭터 이동, 카메라, 필드 상호작용, 조우 감지�
 - 행동 종료 시 생존 상태를 확인하고 Victory 또는 Defeat를 판정한다.
 - 전투 종료 시 임시 상태를 정리하고 Exploration 복귀를 알린다.
 
-현재 1대1 Vertical Slice에서는 `RequestBattleStart()`가 조우 출처, Player Pawn, Enemy Actor의 유효성과 양쪽 `UCombatantComponent` 존재 여부를 검증한다. 승인된 Actor와 Component는 Coordinator가 생명주기를 소유하지 않도록 `TWeakObjectPtr`로 보관한다.
+현재 1대1 Vertical Slice에서는 `RequestBattleStart()`가 조우 출처, Player Pawn, Enemy Actor의 유효성, 양쪽 `UCombatantComponent` 존재 여부와 전투 가능 상태를 검증한다. 승인된 Actor와 Component는 Coordinator가 생명주기를 소유하지 않도록 `TWeakObjectPtr`로 보관한다.
 
 `BattleIntro`에 비동기 배치나 연출이 아직 없으므로 승인 직후 `PlayerCommand`까지 전환한다. Intro 연출이 구현되면 이 임시 즉시 전환을 연출 완료 Event 기반 전환으로 교체한다.
+
+외부 호출자는 상태를 직접 전이하지 않고 `RequestBattleStart()`와 `RequestPlayerBasicAttack()` 같은 명령 API를 사용한다. 실제 상태 전이 함수는 Coordinator 내부에 있으며, 상태 Event 방송 중 재진입과 Action 실행 중 중복 명령은 거부한다.
+
+현재 기본 공격은 데이터 구조가 확정되기 전의 프로토타입으로 플레이어 25, 적 20의 고정 Damage를 사용한다. 플레이어 공격이 끝나면 `TurnEnd`에서 승패를 확인하고, 적이 생존하면 `EnemyTelegraph -> EnemyAction -> TurnEnd`를 동기식으로 진행한다. 방어 입력이 없는 임시 적 Action이므로 `DefenseWindow`는 사용하지 않는다.
+
+적이 전투 불능이면 `Victory -> ReturnToField -> Exploration`으로 전환하면서 조우와 참가자 참조를 정리한다. 플레이어가 전투 불능이면 후속 정책이 결정될 때까지 `Defeat`에 머물며 활성 전투 Context를 유지한다.
 
 이 객체는 Widget의 표시 방식, Animation 세부 연출, 개별 캐릭터의 이동 구현을 소유하지 않는다.
 

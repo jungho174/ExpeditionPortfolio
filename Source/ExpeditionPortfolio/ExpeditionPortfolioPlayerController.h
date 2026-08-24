@@ -8,6 +8,7 @@
 
 class UInputMappingContext;
 class UUserWidget;
+enum class EBattleState : uint8;
 
 /**
  *  Basic PlayerController class for a third person game
@@ -43,10 +44,20 @@ protected:
 	/** Gameplay initialization */
 	virtual void BeginPlay() override;
 
+	/** Battle state delegate cleanup */
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 	/** Input mapping context setup */
 	virtual void SetupInputComponent() override;
 
+	void HandleBattleStateChanged(EBattleState PreviousState, EBattleState NewState);
+	void SetExplorationInputEnabled(bool bEnabled);
+
+
 	/** Returns true if the player should use UMG touch controls */
 	bool ShouldUseTouchControls() const;
+
+	FDelegateHandle BattleStateChangedHandle;
+	bool bExplorationInputEnabled = false;
 
 };

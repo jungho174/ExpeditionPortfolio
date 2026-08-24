@@ -433,4 +433,224 @@ bool FBattleCoordinatorBattleStartRequestTest::RunTest(const FString& Parameters
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBattleCoordinatorMinimalTurnLoopTest,
+	"ExpeditionPortfolio.Combat.BattleCoordinator.MinimalTurnLoop",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBattleCoordinatorMinimalTurnLoopTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FScopedBattleTestWorld TestWorld;
+	UBattleCoordinator* Coordinator = TestWorld.GetCoordinator();
+	UWorld* World = TestWorld.GetWorld();
+	AActor* EncounterSource = World->SpawnActor<AActor>();
+	APawn* PlayerPawn = World->SpawnActor<APawn>();
+	AActor* EnemyActor = World->SpawnActor<AActor>();
+	UCombatantComponent* PlayerCombatant = AddCombatantComponent(PlayerPawn);
+	UCombatantComponent* EnemyCombatant = AddCombatantComponent(EnemyActor);
+
+	if (!TestNotNull(TEXT("Coordinator should exist"), Coordinator)
+		|| !TestNotNull(TEXT("Player combatant should exist"), PlayerCombatant)
+		|| !TestNotNull(TEXT("Enemy combatant should exist"), EnemyCombatant))
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Battle start should succeed"), Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
+
+	bool bReentrantResult = true;
+	TArray<TPair<EBattleState, EBattleState>> Notifications;
+	const FDelegateHandle DelegateHandle = Coordinator->OnBattleStateChanged().AddLambda(
+		[Coordinator, &bReentrantResult, &Notifications](const EBattleState PreviousState, const EBattleState NewState)
+		{
+			Notifications.Emplace(PreviousState, NewState);
+			if (NewState == EBattleState::PlayerAction)
+			{
+				bReentrantResult = Coordinator->RequestPlayerBasicAttack();
+			}
+		});
+
+	AddExpectedError(
+		TEXT("Rejected battle command 'RequestPlayerBasicAttack'"),
+		EAutomationExpectedErrorFlags::Contains,
+		1);
+
+	TestTrue(TEXT("A valid basic attack should complete one round"), Coordinator->RequestPlayerBasicAttack());
+	TestFalse(TEXT("A reentrant command should be rejected"), bReentrantResult);
+	TestEqual(TEXT("The round should return to PlayerCommand"), Coordinator->GetCurrentState(), EBattleState::PlayerCommand);
+	TestEqual(TEXT("Player attack should deal damage once"), EnemyCombatant->GetCurrentHealth(), 75.0f);
+	TestEqual(TEXT("Enemy attack should deal damage once"), PlayerCombatant->GetCurrentHealth(), 80.0f);
+	TestEqual(TEXT("One round should publish six state changes"), Notifications.Num(), 6);
+
+	if (Notifications.Num() == 6)
+	{
+		TestEqual(TEXT("Round should enter PlayerAction"), Notifications[0].Value, EBattleState::PlayerAction);
+		TestEqual(TEXT("Player action should enter TurnEnd"), Notifications[1].Value, EBattleState::TurnEnd);
+		TestEqual(TEXT("Enemy turn should enter Telegraph"), Notifications[2].Value, EBattleState::EnemyTelegraph);
+		TestEqual(TEXT("Telegraph should enter EnemyAction"), Notifications[3].Value, EBattleState::EnemyAction);
+		TestEqual(TEXT("Enemy action should enter TurnEnd"), Notifications[4].Value, EBattleState::TurnEnd);
+		TestEqual(TEXT("Round should return to PlayerCommand"), Notifications[5].Value, EBattleState::PlayerCommand);
+	}
+
+	Coordinator->OnBattleStateChanged().Remove(DelegateHandle);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBattleCoordinatorVictoryCleanupTest,
+	"ExpeditionPortfolio.Combat.BattleCoordinator.VictoryCleanup",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBattleCoordinatorVictoryCleanupTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FScopedBattleTestWorld TestWorld;
+	UBattleCoordinator* Coordinator = TestWorld.GetCoordinator();
+	UWorld* World = TestWorld.GetWorld();
+	AActor* EncounterSource = World->SpawnActor<AActor>();
+	APawn* PlayerPawn = World->SpawnActor<APawn>();
+	AActor* EnemyActor = World->SpawnActor<AActor>();
+	UCombatantComponent* PlayerCombatant = AddCombatantComponent(PlayerPawn);
+	UCombatantComponent* EnemyCombatant = AddCombatantComponent(EnemyActor);
+
+	if (!TestNotNull(TEXT("Coordinator should exist"), Coordinator)
+		|| !TestNotNull(TEXT("Player combatant should exist"), PlayerCombatant)
+		|| !TestNotNull(TEXT("Enemy combatant should exist"), EnemyCombatant))
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Battle start should succeed"), Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
+	TestTrue(TEXT("First round should succeed"), Coordinator->RequestPlayerBasicAttack());
+	TestTrue(TEXT("Second round should succeed"), Coordinator->RequestPlayerBasicAttack());
+	TestTrue(TEXT("Third round should succeed"), Coordinator->RequestPlayerBasicAttack());
+	TestTrue(TEXT("Lethal fourth attack should complete victory cleanup"), Coordinator->RequestPlayerBasicAttack());
+
+	TestEqual(TEXT("Victory should return to Exploration"), Coordinator->GetCurrentState(), EBattleState::Exploration);
+	TestEqual(TEXT("Enemy should be defeated"), EnemyCombatant->GetCurrentHealth(), 0.0f);
+	TestEqual(TEXT("Enemy should attack in only three rounds"), PlayerCombatant->GetCurrentHealth(), 40.0f);
+	TestNull(TEXT("Victory should clear encounter source"), Coordinator->GetActiveEncounterSource());
+	TestNull(TEXT("Victory should clear player"), Coordinator->GetActivePlayerPawn());
+	TestNull(TEXT("Victory should clear enemy"), Coordinator->GetActiveEnemyActor());
+	TestNull(TEXT("Victory should clear player combatant"), Coordinator->GetPlayerCombatant());
+	TestNull(TEXT("Victory should clear enemy combatant"), Coordinator->GetEnemyCombatant());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBattleCoordinatorDefeatTest,
+	"ExpeditionPortfolio.Combat.BattleCoordinator.Defeat",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBattleCoordinatorDefeatTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FScopedBattleTestWorld TestWorld;
+	UBattleCoordinator* Coordinator = TestWorld.GetCoordinator();
+	UWorld* World = TestWorld.GetWorld();
+	AActor* EncounterSource = World->SpawnActor<AActor>();
+	APawn* PlayerPawn = World->SpawnActor<APawn>();
+	AActor* EnemyActor = World->SpawnActor<AActor>();
+	UCombatantComponent* PlayerCombatant = AddCombatantComponent(PlayerPawn);
+	UCombatantComponent* EnemyCombatant = AddCombatantComponent(EnemyActor);
+
+	if (!TestNotNull(TEXT("Coordinator should exist"), Coordinator)
+		|| !TestNotNull(TEXT("Player combatant should exist"), PlayerCombatant)
+		|| !TestNotNull(TEXT("Enemy combatant should exist"), EnemyCombatant))
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Setup damage should leave the player alive"), PlayerCombatant->ApplyDamage(80.0f));
+	TestTrue(TEXT("Battle start should accept a living player"), Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
+	TestTrue(TEXT("The defeating round should complete"), Coordinator->RequestPlayerBasicAttack());
+	TestEqual(TEXT("Defeated player should leave the battle in Defeat"), Coordinator->GetCurrentState(), EBattleState::Defeat);
+	TestEqual(TEXT("Enemy attack should defeat the player"), PlayerCombatant->GetCurrentHealth(), 0.0f);
+	TestEqual(TEXT("Player attack should damage the enemy first"), EnemyCombatant->GetCurrentHealth(), 75.0f);
+	TestEqual(TEXT("Defeat should retain the active player"), Coordinator->GetActivePlayerPawn(), PlayerPawn);
+	TestEqual(TEXT("Defeat should retain the active enemy"), Coordinator->GetActiveEnemyActor(), EnemyActor);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBattleCoordinatorDefeatedParticipantTest,
+	"ExpeditionPortfolio.Combat.BattleCoordinator.DefeatedParticipant",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBattleCoordinatorDefeatedParticipantTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FScopedBattleTestWorld TestWorld;
+	UBattleCoordinator* Coordinator = TestWorld.GetCoordinator();
+	UWorld* World = TestWorld.GetWorld();
+	AActor* EncounterSource = World->SpawnActor<AActor>();
+	APawn* PlayerPawn = World->SpawnActor<APawn>();
+	AActor* EnemyActor = World->SpawnActor<AActor>();
+	UCombatantComponent* PlayerCombatant = AddCombatantComponent(PlayerPawn);
+	UCombatantComponent* EnemyCombatant = AddCombatantComponent(EnemyActor);
+
+	if (!TestNotNull(TEXT("Coordinator should exist"), Coordinator)
+		|| !TestNotNull(TEXT("Player combatant should exist"), PlayerCombatant)
+		|| !TestNotNull(TEXT("Enemy combatant should exist"), EnemyCombatant))
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Setup damage should defeat the enemy"), EnemyCombatant->ApplyDamage(100.0f));
+	AddExpectedError(
+		TEXT("Rejected battle start request: Player and Enemy must both be able to act"),
+		EAutomationExpectedErrorFlags::Contains,
+		1);
+	TestFalse(
+		TEXT("Already defeated participants should be rejected"),
+		Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
+	TestEqual(TEXT("Rejected start should preserve Exploration"), Coordinator->GetCurrentState(), EBattleState::Exploration);
+	TestNull(TEXT("Rejected start should not retain encounter context"), Coordinator->GetActiveEncounterSource());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBattleCoordinatorInvalidActiveParticipantTest,
+	"ExpeditionPortfolio.Combat.BattleCoordinator.InvalidActiveParticipant",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBattleCoordinatorInvalidActiveParticipantTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FScopedBattleTestWorld TestWorld;
+	UBattleCoordinator* Coordinator = TestWorld.GetCoordinator();
+	UWorld* World = TestWorld.GetWorld();
+	AActor* EncounterSource = World->SpawnActor<AActor>();
+	APawn* PlayerPawn = World->SpawnActor<APawn>();
+	AActor* EnemyActor = World->SpawnActor<AActor>();
+	UCombatantComponent* PlayerCombatant = AddCombatantComponent(PlayerPawn);
+	UCombatantComponent* EnemyCombatant = AddCombatantComponent(EnemyActor);
+
+	if (!TestNotNull(TEXT("Coordinator should exist"), Coordinator)
+		|| !TestNotNull(TEXT("Player combatant should exist"), PlayerCombatant)
+		|| !TestNotNull(TEXT("Enemy combatant should exist"), EnemyCombatant))
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Battle start should succeed"), Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
+	EnemyCombatant->DestroyComponent();
+
+	AddExpectedError(
+		TEXT("active battle participants are invalid or defeated"),
+		EAutomationExpectedErrorFlags::Contains,
+		1);
+	TestFalse(TEXT("A command with an invalid participant should be rejected"), Coordinator->RequestPlayerBasicAttack());
+	TestEqual(TEXT("Invalid participants should return the battle to Exploration"), Coordinator->GetCurrentState(), EBattleState::Exploration);
+	TestNull(TEXT("Invalid participant cleanup should clear encounter context"), Coordinator->GetActiveEncounterSource());
+	TestNull(TEXT("Invalid participant cleanup should clear player context"), Coordinator->GetActivePlayerPawn());
+	TestNull(TEXT("Invalid participant cleanup should clear enemy context"), Coordinator->GetActiveEnemyActor());
+	return true;
+}
 #endif

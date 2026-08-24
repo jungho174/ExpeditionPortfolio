@@ -32,6 +32,10 @@
 
 각 `TurnEnd`에서 승리 또는 패배 조건이 만족되면 반복 대신 `Victory` 또는 `Defeat`로 전이한다. 승리 흐름은 `Victory -> ReturnToField -> Exploration`으로 종료한다.
 
+현재 최소 전투 루프에서는 `RequestPlayerBasicAttack()`이 승인되면 플레이어와 적의 고정 Damage Action을 한 라운드 동안 동기식으로 처리한다. 적 Action은 아직 방어 입력을 허용하지 않으므로 `EnemyAction -> TurnEnd`로 종료하며, `DefenseWindow` 연결은 Milestone 3에서 추가한다.
+
+상태 변경 Event 방송 중에는 새로운 전이와 명령을 거부한다. 따라서 Event 소비자는 상태를 관찰할 수 있지만 같은 호출 스택에서 전투 흐름을 다시 진행시킬 수 없다.
+
 ## 구현 시 검증할 예외
 
 - Action 도중 참가자가 제거되거나 무효화된 경우

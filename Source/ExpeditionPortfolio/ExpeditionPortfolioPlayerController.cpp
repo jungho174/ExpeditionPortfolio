@@ -2,6 +2,8 @@
 
 
 #include "ExpeditionPortfolioPlayerController.h"
+#include "Combat/BattleCoordinator.h"
+#include "Engine/World.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
 #include "InputMappingContext.h"
@@ -12,6 +14,15 @@
 void AExpeditionPortfolioPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+	if (IsLocalPlayerController())
+	{
+		if (UBattleCoordinator* Coordinator = GetWorld()->GetSubsystem<UBattleCoordinator>())
+		{
+			BattleStateChangedHandle = Coordinator->OnBattleStateChanged().AddUObject(this, &ThisClass::HandleBattleStateChanged);
+			SetExplorationInputEnabled(Coordinator->GetCurrentState() == EBattleState::Exploration);
+		}
+	}
+
 
 	// only spawn touch controls on local player controllers
 	if (IsLocalPlayerController() && ShouldUseTouchControls())
@@ -24,6 +35,7 @@ void AExpeditionPortfolioPlayerController::BeginPlay()
 			// add the controls to the player screen
 			MobileControlsWidget->AddToPlayerScreen(0);
 
+			MobileControlsWidget->SetIsEnabled(bExplorationInputEnabled);
 		} else {
 
 			UE_LOG(LogExpeditionPortfolio, Error, TEXT("Could not spawn mobile controls widget."));
@@ -33,31 +45,103 @@ void AExpeditionPortfolioPlayerController::BeginPlay()
 	}
 }
 
+void AExpeditionPortfolioPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (BattleStateChangedHandle.IsValid())
+	{
+		if (UBattleCoordinator* Coordinator = GetWorld()->GetSubsystem<UBattleCoordinator>())
+		{
+			Coordinator->OnBattleStateChanged().Remove(BattleStateChangedHandle);
+		}
+		BattleStateChangedHandle.Reset();
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
 void AExpeditionPortfolioPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
 
-	// only add IMCs for local player controllers
-	if (IsLocalPlayerController())
-	{
-		// Add Input Mapping Contexts
-		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
-		{
-			for (UInputMappingContext* CurrentContext : DefaultMappingContexts)
-			{
-				Subsystem->AddMappingContext(CurrentContext, 0);
-			}
+	bExplorationInputEnabled = false;
+	SetExplorationInputEnabled(true);
 
-			// only add these IMCs if we're not using mobile touch input
-			if (!ShouldUseTouchControls())
-			{
-				for (UInputMappingContext* CurrentContext : MobileExcludedMappingContexts)
-				{
-					Subsystem->AddMappingContext(CurrentContext, 0);
-				}
-			}
+	if (UBattleCoordinator* Coordinator = GetWorld()->GetSubsystem<UBattleCoordinator>())
+	{
+		if (Coordinator->GetCurrentState() != EBattleState::Exploration)
+		{
+			SetExplorationInputEnabled(false);
 		}
 	}
+}
+
+void AExpeditionPortfolioPlayerController::HandleBattleStateChanged(
+	const EBattleState PreviousState,
+	const EBattleState NewState)
+{
+	if (NewState == EBattleState::Exploration)
+	{
+		SetExplorationInputEnabled(true);
+		return;
+	}
+
+	if (PreviousState == EBattleState::Exploration)
+	{
+		SetExplorationInputEnabled(false);
+	}
+}
+
+void AExpeditionPortfolioPlayerController::SetExplorationInputEnabled(const bool bEnabled)
+{
+	if (!IsLocalPlayerController() || bExplorationInputEnabled == bEnabled)
+	{
+		return;
+	}
+
+	UEnhancedInputLocalPlayerSubsystem* Subsystem =
+		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer());
+	if (Subsystem == nullptr)
+	{
+		return;
+	}
+
+	const auto UpdateMappingContext = [Subsystem, bEnabled](UInputMappingContext* Context)
+	{
+		if (!IsValid(Context))
+		{
+			return;
+		}
+
+		if (bEnabled)
+		{
+			Subsystem->AddMappingContext(Context, 0);
+		}
+		else
+		{
+			Subsystem->RemoveMappingContext(Context);
+		}
+	};
+
+	for (UInputMappingContext* Context : DefaultMappingContexts)
+	{
+		UpdateMappingContext(Context);
+	}
+
+	if (!ShouldUseTouchControls())
+	{
+		for (UInputMappingContext* Context : MobileExcludedMappingContexts)
+		{
+			UpdateMappingContext(Context);
+		}
+	}
+
+	SetIgnoreMoveInput(!bEnabled);
+	SetIgnoreLookInput(!bEnabled);
+	if (MobileControlsWidget != nullptr)
+	{
+		MobileControlsWidget->SetIsEnabled(bEnabled);
+	}
+	bExplorationInputEnabled = bEnabled;
 }
 
 bool AExpeditionPortfolioPlayerController::ShouldUseTouchControls() const
