@@ -31,10 +31,12 @@ bool UCombatantComponent::ApplyDamage(const float DamageAmount)
 	}
 
 	HealthChanged.Broadcast(PreviousHealth, CurrentHealth);
+	HealthChangedBlueprint.Broadcast(PreviousHealth, CurrentHealth);
 
 	if (IsDefeated())
 	{
 		Defeated.Broadcast();
+		DefeatedBlueprint.Broadcast();
 	}
 
 	return true;

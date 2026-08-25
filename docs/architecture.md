@@ -15,7 +15,7 @@ Exploration은 캐릭터 이동, 카메라, 필드 상호작용, 조우 감지�
 - 맵 전환, 같은 맵 안의 전투 공간 이동, 별도 전투 Level 사용 여부는 아직 확정하지 않는다.
 - 전투 중 필드 Actor를 숨기거나 정지시키는 정책도 Vertical Slice의 전환 방식이 결정된 뒤 확정한다.
 
-`AExpeditionPortfolioPlayerController`는 상태 변경 Event를 구독하고 `Exploration`을 벗어날 때 탐험용 Enhanced Input Mapping Context와 이동/시점 입력을 비활성화한다. `ReturnToField -> Exploration`이 완료되면 같은 입력을 복원한다.
+`AExpeditionPortfolioPlayerController`는 상태 변경 Event를 구독하고 `Exploration`을 벗어날 때 탐험용 Enhanced Input Mapping Context와 이동/시점 입력을 비활성화한다. 전투 중에는 Game and UI 입력 모드와 Mouse Cursor를 사용하며, `PlayerCommand`에서만 전투 명령 Mapping Context를 활성화한다. `ReturnToField -> Exploration`이 완료되면 탐험 입력과 Game Only 입력 모드를 복원한다.
 
 ## BattleCoordinator의 책임
 
@@ -33,9 +33,9 @@ Exploration은 캐릭터 이동, 카메라, 필드 상호작용, 조우 감지�
 
 `BattleIntro`에 비동기 배치나 연출이 아직 없으므로 승인 직후 `PlayerCommand`까지 전환한다. Intro 연출이 구현되면 이 임시 즉시 전환을 연출 완료 Event 기반 전환으로 교체한다.
 
-외부 호출자는 상태를 직접 전이하지 않고 `RequestBattleStart()`와 `RequestPlayerBasicAttack()` 같은 명령 API를 사용한다. 실제 상태 전이 함수는 Coordinator 내부에 있으며, 상태 Event 방송 중 재진입과 Action 실행 중 중복 명령은 거부한다.
+외부 호출자는 상태를 직접 전이하지 않고 `RequestBattleStart()`와 `RequestPlayerCommand()` 같은 명령 API를 사용한다. `EBattlePlayerCommand`는 현재 `BasicAttack`과 `PowerStrike`를 제공하며, Coordinator가 상태와 사용 가능 여부를 검증한 뒤 Action을 실행한다. 실제 상태 전이 함수는 Coordinator 내부에 있으며, 상태 Event 방송 중 재진입과 Action 실행 중 중복 명령은 거부한다.
 
-현재 기본 공격은 데이터 구조가 확정되기 전의 프로토타입으로 플레이어 25, 적 20의 고정 Damage를 사용한다. 플레이어 공격이 끝나면 `TurnEnd`에서 승패를 확인하고, 적이 생존하면 `EnemyTelegraph -> EnemyAction -> TurnEnd`를 동기식으로 진행한다. 방어 입력이 없는 임시 적 Action이므로 `DefenseWindow`는 사용하지 않는다.
+현재 명령은 데이터 구조가 확정되기 전의 프로토타입으로 `BasicAttack`은 25 Damage, 전투당 한 번 사용할 수 있는 `PowerStrike`는 40 Damage를 사용한다. 적 기본 공격은 20 Damage다. 플레이어 Action이 끝나면 `TurnEnd`에서 승패를 확인하고, 적이 생존하면 `EnemyTelegraph -> EnemyAction -> TurnEnd`를 동기식으로 진행한다. 방어 입력이 없는 임시 적 Action이므로 `DefenseWindow`는 사용하지 않는다.
 
 적이 전투 불능이면 `Victory -> ReturnToField -> Exploration`으로 전환하면서 조우와 참가자 참조를 정리한다. 플레이어가 전투 불능이면 후속 정책이 결정될 때까지 `Defeat`에 머물며 활성 전투 Context를 유지한다.
 
@@ -63,6 +63,17 @@ UI는 전투 상태의 소비자이자 사용자 명령의 입력 경계다.
 - Widget은 공격/스킬 선택 의도를 명령 형태로 전달하고, 유효성 검사와 실제 상태 전이는 게임 로직이 수행한다.
 - HP, 현재 턴, 선택 가능 Action은 게임 로직의 데이터를 표시하며 Widget 내부에 별도 원본 상태를 만들지 않는다.
 - Widget Animation 종료가 핵심 전투 로직의 유일한 진행 조건이 되지 않도록 완료 신호와 실패 시 대체 경로를 둔다.
+
+`UCombatHUDWidget`은 정식 전투 HUD Blueprint의 C++ 기반 클래스다. Coordinator와 양쪽 `UCombatantComponent`의 native Event를 구독하고 `Battle View Updated` Blueprint Event로 현재 상태, HP와 명령 사용 가능 여부를 전달한다. Widget의 버튼과 PlayerController의 Enhanced Input은 모두 `RequestPlayerCommand()`로 같은 명령 경계를 사용한다. Widget은 표시를 위한 별도 원본 상태를 만들지 않으며 `Exploration`에서는 자동으로 숨겨진다.
+
+에디터에서는 다음 에셋을 조립한다.
+
+- `IA_BasicAttack`, `IA_PowerStrike` Input Action
+- 위 Action을 키 또는 Gamepad 입력에 연결한 `IMC_PlayerCommand`
+- `UCombatHUDWidget`을 부모로 하는 `WBP_CombatHUD`
+- PlayerController Blueprint의 `Player Command Mapping Context`, 두 Input Action, `Combat HUD Widget Class` 지정
+
+`WBP_CombatHUD`는 `Battle View Updated` Event의 값으로 HP, 상태 Text와 버튼 활성화를 갱신한다. 기본 공격 버튼은 `Request Basic Attack`, 대표 스킬 버튼은 `Request Power Strike`를 호출한다.
 
 ## Data Asset 기반 스킬과 몬스터 패턴
 

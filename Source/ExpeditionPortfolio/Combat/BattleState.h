@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "BattleState.generated.h"
 
-UENUM()
+UENUM(BlueprintType)
 enum class EBattleState : uint8
 {
 	Exploration,

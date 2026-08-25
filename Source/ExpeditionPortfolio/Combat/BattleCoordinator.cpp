@@ -20,6 +20,7 @@ void UBattleCoordinator::Initialize(FSubsystemCollectionBase& Collection)
 void UBattleCoordinator::Deinitialize()
 {
 	BattleStateChanged.Clear();
+	BattleStateChangedBlueprint.Clear();
 	ClearBattleContext();
 	bTransitionInProgress = false;
 	bActionInProgress = false;
@@ -62,6 +63,7 @@ bool UBattleCoordinator::TryTransitionTo(const EBattleState NewState)
 		*UEnum::GetValueAsString(CurrentState));
 
 	BattleStateChanged.Broadcast(PreviousState, CurrentState);
+	BattleStateChangedBlueprint.Broadcast(PreviousState, CurrentState);
 	return true;
 }
 
@@ -150,6 +152,7 @@ bool UBattleCoordinator::RequestBattleStart(AActor* EncounterSource, APawn* Play
 	ActiveEnemyActor = EnemyActor;
 	PlayerCombatant = FoundPlayerCombatant;
 	EnemyCombatant = FoundEnemyCombatant;
+	bPowerStrikeUsed = false;
 
 	if (!TryTransitionTo(EBattleState::BattleIntro))
 	{
@@ -180,23 +183,80 @@ bool UBattleCoordinator::RequestBattleStart(AActor* EncounterSource, APawn* Play
 
 bool UBattleCoordinator::RequestPlayerBasicAttack()
 {
+	return RequestPlayerCommand(EBattlePlayerCommand::BasicAttack);
+}
+
+bool UBattleCoordinator::RequestPlayerPowerStrike()
+{
+	return RequestPlayerCommand(EBattlePlayerCommand::PowerStrike);
+}
+
+bool UBattleCoordinator::CanRequestPlayerCommand(const EBattlePlayerCommand Command) const
+{
+	if (CurrentState != EBattleState::PlayerCommand
+		|| !HasValidActiveBattle())
+	{
+		return false;
+	}
+
+	switch (Command)
+	{
+	case EBattlePlayerCommand::BasicAttack:
+		return true;
+
+	case EBattlePlayerCommand::PowerStrike:
+		return !bPowerStrikeUsed;
+
+	default:
+		return false;
+	}
+}
+
+bool UBattleCoordinator::RequestPlayerCommand(const EBattlePlayerCommand Command)
+{
 	if (bTransitionInProgress || bActionInProgress)
 	{
-		LogRejectedCommand(TEXT("RequestPlayerBasicAttack"), TEXT("another battle operation is in progress"));
+		LogRejectedCommand(TEXT("RequestPlayerCommand"), TEXT("another battle operation is in progress"));
 		return false;
 	}
 
 	if (CurrentState != EBattleState::PlayerCommand)
 	{
-		LogRejectedCommand(TEXT("RequestPlayerBasicAttack"), TEXT("current state is not PlayerCommand"));
+		LogRejectedCommand(TEXT("RequestPlayerCommand"), TEXT("current state is not PlayerCommand"));
 		return false;
 	}
 
 	if (!HasValidActiveBattle())
 	{
-		LogRejectedCommand(TEXT("RequestPlayerBasicAttack"), TEXT("active battle participants are invalid or defeated"));
+		LogRejectedCommand(TEXT("RequestPlayerCommand"), TEXT("active battle participants are invalid or defeated"));
 		ReturnToExploration();
 		return false;
+	}
+
+	if (Command == EBattlePlayerCommand::PowerStrike && bPowerStrikeUsed)
+	{
+		LogRejectedCommand(TEXT("RequestPlayerCommand"), TEXT("PowerStrike has already been used in this battle"));
+		return false;
+	}
+
+	if (Command != EBattlePlayerCommand::BasicAttack && Command != EBattlePlayerCommand::PowerStrike)
+	{
+		LogRejectedCommand(TEXT("RequestPlayerCommand"), TEXT("the requested command is not supported"));
+		return false;
+	}
+
+	return ExecutePlayerCommand(Command);
+}
+
+bool UBattleCoordinator::ExecutePlayerCommand(const EBattlePlayerCommand Command)
+{
+	const float Damage = Command == EBattlePlayerCommand::PowerStrike
+		? PlayerPowerStrikeDamage
+		: PlayerBasicAttackDamage;
+
+	if (Command == EBattlePlayerCommand::PowerStrike)
+	{
+		bPowerStrikeUsed = true;
 	}
 
 	TGuardValue<bool> ActionGuard(bActionInProgress, true);
@@ -206,9 +266,9 @@ bool UBattleCoordinator::RequestPlayerBasicAttack()
 		return false;
 	}
 
-	if (!EnemyCombatant->ApplyDamage(PlayerBasicAttackDamage))
+	if (!EnemyCombatant->ApplyDamage(Damage))
 	{
-		LogRejectedCommand(TEXT("RequestPlayerBasicAttack"), TEXT("player damage could not be applied"));
+		LogRejectedCommand(TEXT("RequestPlayerCommand"), TEXT("player damage could not be applied"));
 		ReturnToExploration();
 		return false;
 	}
@@ -392,6 +452,7 @@ void UBattleCoordinator::ClearBattleContext()
 	ActiveEnemyActor.Reset();
 	PlayerCombatant.Reset();
 	EnemyCombatant.Reset();
+	bPowerStrikeUsed = false;
 }
 
 void UBattleCoordinator::LogRejectedCommand(const TCHAR* CommandName, const TCHAR* Reason) const

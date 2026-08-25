@@ -3,12 +3,15 @@
 
 #include "ExpeditionPortfolioPlayerController.h"
 #include "Combat/BattleCoordinator.h"
+#include "EnhancedInputComponent.h"
 #include "Engine/World.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
 #include "InputMappingContext.h"
+#include "InputAction.h"
 #include "Blueprint/UserWidget.h"
 #include "ExpeditionPortfolio.h"
+#include "UI/CombatHUDWidget.h"
 #include "Widgets/Input/SVirtualJoystick.h"
 
 void AExpeditionPortfolioPlayerController::BeginPlay()
@@ -19,7 +22,19 @@ void AExpeditionPortfolioPlayerController::BeginPlay()
 		if (UBattleCoordinator* Coordinator = GetWorld()->GetSubsystem<UBattleCoordinator>())
 		{
 			BattleStateChangedHandle = Coordinator->OnBattleStateChanged().AddUObject(this, &ThisClass::HandleBattleStateChanged);
-			SetExplorationInputEnabled(Coordinator->GetCurrentState() == EBattleState::Exploration);
+			const EBattleState CurrentState = Coordinator->GetCurrentState();
+			SetExplorationInputEnabled(CurrentState == EBattleState::Exploration);
+			SetPlayerCommandInputEnabled(CurrentState == EBattleState::PlayerCommand);
+			SetBattleInteractionEnabled(CurrentState != EBattleState::Exploration);
+		}
+
+		if (CombatHUDWidgetClass != nullptr)
+		{
+			CombatHUDWidget = CreateWidget<UCombatHUDWidget>(this, CombatHUDWidgetClass);
+			if (CombatHUDWidget != nullptr)
+			{
+				CombatHUDWidget->AddToPlayerScreen(10);
+			}
 		}
 	}
 
@@ -47,6 +62,12 @@ void AExpeditionPortfolioPlayerController::BeginPlay()
 
 void AExpeditionPortfolioPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (CombatHUDWidget != nullptr)
+	{
+		CombatHUDWidget->RemoveFromParent();
+		CombatHUDWidget = nullptr;
+	}
+
 	if (BattleStateChangedHandle.IsValid())
 	{
 		if (UBattleCoordinator* Coordinator = GetWorld()->GetSubsystem<UBattleCoordinator>())
@@ -62,6 +83,25 @@ void AExpeditionPortfolioPlayerController::EndPlay(const EEndPlayReason::Type En
 void AExpeditionPortfolioPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
+	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent))
+	{
+		if (BasicAttackInputAction != nullptr)
+		{
+			EnhancedInputComponent->BindAction(
+				BasicAttackInputAction,
+				ETriggerEvent::Started,
+				this,
+				&ThisClass::HandleBasicAttackInput);
+		}
+		if (PowerStrikeInputAction != nullptr)
+		{
+			EnhancedInputComponent->BindAction(
+				PowerStrikeInputAction,
+				ETriggerEvent::Started,
+				this,
+				&ThisClass::HandlePowerStrikeInput);
+		}
+	}
 
 	bExplorationInputEnabled = false;
 	SetExplorationInputEnabled(true);
@@ -72,6 +112,7 @@ void AExpeditionPortfolioPlayerController::SetupInputComponent()
 		{
 			SetExplorationInputEnabled(false);
 		}
+		SetPlayerCommandInputEnabled(Coordinator->GetCurrentState() == EBattleState::PlayerCommand);
 	}
 }
 
@@ -79,15 +120,25 @@ void AExpeditionPortfolioPlayerController::HandleBattleStateChanged(
 	const EBattleState PreviousState,
 	const EBattleState NewState)
 {
-	if (NewState == EBattleState::Exploration)
-	{
-		SetExplorationInputEnabled(true);
-		return;
-	}
+	(void)PreviousState;
+	SetExplorationInputEnabled(NewState == EBattleState::Exploration);
+	SetPlayerCommandInputEnabled(NewState == EBattleState::PlayerCommand);
+	SetBattleInteractionEnabled(NewState != EBattleState::Exploration);
+}
 
-	if (PreviousState == EBattleState::Exploration)
+void AExpeditionPortfolioPlayerController::HandleBasicAttackInput()
+{
+	if (UBattleCoordinator* Coordinator = GetWorld()->GetSubsystem<UBattleCoordinator>())
 	{
-		SetExplorationInputEnabled(false);
+		Coordinator->RequestPlayerCommand(EBattlePlayerCommand::BasicAttack);
+	}
+}
+
+void AExpeditionPortfolioPlayerController::HandlePowerStrikeInput()
+{
+	if (UBattleCoordinator* Coordinator = GetWorld()->GetSubsystem<UBattleCoordinator>())
+	{
+		Coordinator->RequestPlayerCommand(EBattlePlayerCommand::PowerStrike);
 	}
 }
 
@@ -142,6 +193,55 @@ void AExpeditionPortfolioPlayerController::SetExplorationInputEnabled(const bool
 		MobileControlsWidget->SetIsEnabled(bEnabled);
 	}
 	bExplorationInputEnabled = bEnabled;
+}
+
+void AExpeditionPortfolioPlayerController::SetPlayerCommandInputEnabled(const bool bEnabled)
+{
+	if (!IsLocalPlayerController() || bPlayerCommandInputEnabled == bEnabled)
+	{
+		return;
+	}
+
+	UEnhancedInputLocalPlayerSubsystem* Subsystem =
+		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer());
+	if (Subsystem == nullptr)
+	{
+		return;
+	}
+
+	if (PlayerCommandMappingContext != nullptr)
+	{
+		if (bEnabled)
+		{
+			Subsystem->AddMappingContext(PlayerCommandMappingContext, 1);
+		}
+		else
+		{
+			Subsystem->RemoveMappingContext(PlayerCommandMappingContext);
+		}
+	}
+	bPlayerCommandInputEnabled = bEnabled;
+}
+
+void AExpeditionPortfolioPlayerController::SetBattleInteractionEnabled(const bool bEnabled)
+{
+	if (!IsLocalPlayerController() || bBattleInteractionEnabled == bEnabled)
+	{
+		return;
+	}
+
+	bShowMouseCursor = bEnabled;
+	if (bEnabled)
+	{
+		FInputModeGameAndUI InputMode;
+		InputMode.SetHideCursorDuringCapture(false);
+		SetInputMode(InputMode);
+	}
+	else
+	{
+		SetInputMode(FInputModeGameOnly());
+	}
+	bBattleInteractionEnabled = bEnabled;
 }
 
 bool AExpeditionPortfolioPlayerController::ShouldUseTouchControls() const

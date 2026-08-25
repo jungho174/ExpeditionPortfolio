@@ -473,7 +473,7 @@ bool FBattleCoordinatorMinimalTurnLoopTest::RunTest(const FString& Parameters)
 		});
 
 	AddExpectedError(
-		TEXT("Rejected battle command 'RequestPlayerBasicAttack'"),
+		TEXT("Rejected battle command 'RequestPlayerCommand'"),
 		EAutomationExpectedErrorFlags::Contains,
 		1);
 
@@ -651,6 +651,111 @@ bool FBattleCoordinatorInvalidActiveParticipantTest::RunTest(const FString& Para
 	TestNull(TEXT("Invalid participant cleanup should clear encounter context"), Coordinator->GetActiveEncounterSource());
 	TestNull(TEXT("Invalid participant cleanup should clear player context"), Coordinator->GetActivePlayerPawn());
 	TestNull(TEXT("Invalid participant cleanup should clear enemy context"), Coordinator->GetActiveEnemyActor());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBattleCoordinatorPlayerCommandsTest,
+	"ExpeditionPortfolio.Combat.BattleCoordinator.PlayerCommands",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBattleCoordinatorPlayerCommandsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FScopedBattleTestWorld TestWorld;
+	UBattleCoordinator* Coordinator = TestWorld.GetCoordinator();
+	UWorld* World = TestWorld.GetWorld();
+	AActor* EncounterSource = World->SpawnActor<AActor>();
+	APawn* PlayerPawn = World->SpawnActor<APawn>();
+	AActor* EnemyActor = World->SpawnActor<AActor>();
+	UCombatantComponent* PlayerCombatant = AddCombatantComponent(PlayerPawn);
+	UCombatantComponent* EnemyCombatant = AddCombatantComponent(EnemyActor);
+
+	if (!TestNotNull(TEXT("Coordinator should exist"), Coordinator)
+		|| !TestNotNull(TEXT("Player combatant should exist"), PlayerCombatant)
+		|| !TestNotNull(TEXT("Enemy combatant should exist"), EnemyCombatant))
+	{
+		return false;
+	}
+
+	AddExpectedError(
+		TEXT("Rejected battle command 'RequestPlayerCommand'"),
+		EAutomationExpectedErrorFlags::Contains,
+		2);
+
+	TestFalse(
+		TEXT("Commands should be rejected outside PlayerCommand"),
+		Coordinator->RequestPlayerCommand(EBattlePlayerCommand::BasicAttack));
+	TestFalse(
+		TEXT("Basic attack should not be available before a battle"),
+		Coordinator->CanRequestPlayerCommand(EBattlePlayerCommand::BasicAttack));
+	TestTrue(TEXT("Battle start should succeed"), Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
+	TestTrue(
+		TEXT("Basic attack should be available at PlayerCommand"),
+		Coordinator->CanRequestPlayerCommand(EBattlePlayerCommand::BasicAttack));
+	TestTrue(
+		TEXT("Power Strike should initially be available"),
+		Coordinator->CanRequestPlayerCommand(EBattlePlayerCommand::PowerStrike));
+	bool bBasicAttackAvailableAtPlayerCommandEvent = false;
+	bool bPowerStrikeAvailableAtPlayerCommandEvent = true;
+	const FDelegateHandle AvailabilityHandle = Coordinator->OnBattleStateChanged().AddLambda(
+		[Coordinator, &bBasicAttackAvailableAtPlayerCommandEvent, &bPowerStrikeAvailableAtPlayerCommandEvent](
+			const EBattleState PreviousState,
+			const EBattleState NewState)
+		{
+			(void)PreviousState;
+			if (NewState == EBattleState::PlayerCommand)
+			{
+				bBasicAttackAvailableAtPlayerCommandEvent =
+					Coordinator->CanRequestPlayerCommand(EBattlePlayerCommand::BasicAttack);
+				bPowerStrikeAvailableAtPlayerCommandEvent =
+					Coordinator->CanRequestPlayerCommand(EBattlePlayerCommand::PowerStrike);
+			}
+		});
+
+	TestTrue(
+		TEXT("Power Strike should complete one round"),
+		Coordinator->RequestPlayerCommand(EBattlePlayerCommand::PowerStrike));
+	TestEqual(TEXT("Power Strike should deal 40 damage"), EnemyCombatant->GetCurrentHealth(), 60.0f);
+	TestEqual(TEXT("The enemy should counterattack once"), PlayerCombatant->GetCurrentHealth(), 80.0f);
+	TestFalse(
+		TEXT("Power Strike should be unavailable after use"),
+		Coordinator->CanRequestPlayerCommand(EBattlePlayerCommand::PowerStrike));
+	TestTrue(
+		TEXT("The PlayerCommand event should expose Basic Attack as available"),
+		bBasicAttackAvailableAtPlayerCommandEvent);
+	TestFalse(
+		TEXT("The PlayerCommand event should expose consumed Power Strike as unavailable"),
+		bPowerStrikeAvailableAtPlayerCommandEvent);
+	TestFalse(
+		TEXT("A second Power Strike should be rejected"),
+		Coordinator->RequestPlayerCommand(EBattlePlayerCommand::PowerStrike));
+	TestEqual(TEXT("A rejected command should not deal damage"), EnemyCombatant->GetCurrentHealth(), 60.0f);
+
+	TestTrue(TEXT("First basic attack should succeed"), Coordinator->RequestPlayerBasicAttack());
+	TestTrue(TEXT("Second basic attack should succeed"), Coordinator->RequestPlayerBasicAttack());
+	TestTrue(TEXT("The lethal basic attack should succeed"), Coordinator->RequestPlayerBasicAttack());
+	TestEqual(TEXT("Victory should return to Exploration"), Coordinator->GetCurrentState(), EBattleState::Exploration);
+
+	AActor* SecondEncounterSource = World->SpawnActor<AActor>();
+	APawn* SecondPlayerPawn = World->SpawnActor<APawn>();
+	AActor* SecondEnemyActor = World->SpawnActor<AActor>();
+	UCombatantComponent* SecondPlayerCombatant = AddCombatantComponent(SecondPlayerPawn);
+	UCombatantComponent* SecondEnemyCombatant = AddCombatantComponent(SecondEnemyActor);
+	if (!TestNotNull(TEXT("Second player combatant should exist"), SecondPlayerCombatant)
+		|| !TestNotNull(TEXT("Second enemy combatant should exist"), SecondEnemyCombatant))
+	{
+		return false;
+	}
+
+	TestTrue(
+		TEXT("A new battle should start after victory cleanup"),
+		Coordinator->RequestBattleStart(SecondEncounterSource, SecondPlayerPawn, SecondEnemyActor));
+	TestTrue(
+		TEXT("A new battle should reset Power Strike availability"),
+		Coordinator->CanRequestPlayerCommand(EBattlePlayerCommand::PowerStrike));
+	Coordinator->OnBattleStateChanged().Remove(AvailabilityHandle);
 	return true;
 }
 #endif

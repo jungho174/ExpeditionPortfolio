@@ -33,6 +33,8 @@
 
 완료 기준: UI가 상태를 소유하지 않은 채 명령 선택과 전투 정보 표시를 수행한다.
 
+현재 C++ 기반은 `BasicAttack`, 전투당 1회의 `PowerStrike`, 상태별 Enhanced Input Context 전환, Blueprint용 상태/HP Event와 `UCombatHUDWidget` 연결 지점까지 구현됐다. Milestone 2의 플레이 가능한 완료에는 Input Action/Mapping Context와 `WBP_CombatHUD` 에셋 조립 및 PIE 수동 검증이 남아 있다.
+
 ## Milestone 3 — 패링과 회피 (1~2주)
 
 목표: 적 턴에 Telegraph를 읽고 실시간 방어 입력으로 결과를 바꿀 수 있게 한다.

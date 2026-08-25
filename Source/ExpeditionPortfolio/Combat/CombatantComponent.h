@@ -13,6 +13,13 @@ DECLARE_MULTICAST_DELEGATE_TwoParams(
 
 DECLARE_MULTICAST_DELEGATE(FOnCombatantDefeated);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnCombatantHealthChangedBlueprint,
+	float, PreviousHealth,
+	float, NewHealth);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnCombatantDefeatedBlueprint);
+
 UCLASS(ClassGroup = (Combat), meta = (BlueprintSpawnableComponent))
 class EXPEDITIONPORTFOLIO_API UCombatantComponent : public UActorComponent
 {
@@ -35,6 +42,12 @@ public:
 
 	FOnCombatantHealthChanged& OnHealthChanged() { return HealthChanged; }
 	FOnCombatantDefeated& OnDefeated() { return Defeated; }
+
+	UPROPERTY(BlueprintAssignable, Category = "Combat|Health")
+	FOnCombatantHealthChangedBlueprint HealthChangedBlueprint;
+
+	UPROPERTY(BlueprintAssignable, Category = "Combat|Health")
+	FOnCombatantDefeatedBlueprint DefeatedBlueprint;
 
 protected:
 	virtual void BeginPlay() override;

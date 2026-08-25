@@ -7,7 +7,9 @@
 #include "ExpeditionPortfolioPlayerController.generated.h"
 
 class UInputMappingContext;
+class UInputAction;
 class UUserWidget;
+class UCombatHUDWidget;
 enum class EBattleState : uint8;
 
 /**
@@ -28,6 +30,21 @@ protected:
 	/** Input Mapping Contexts */
 	UPROPERTY(EditAnywhere, Category="Input|Input Mappings")
 	TArray<UInputMappingContext*> MobileExcludedMappingContexts;
+
+	UPROPERTY(EditAnywhere, Category = "Input|Combat")
+	TObjectPtr<UInputMappingContext> PlayerCommandMappingContext;
+
+	UPROPERTY(EditAnywhere, Category = "Input|Combat")
+	TObjectPtr<UInputAction> BasicAttackInputAction;
+
+	UPROPERTY(EditAnywhere, Category = "Input|Combat")
+	TObjectPtr<UInputAction> PowerStrikeInputAction;
+
+	UPROPERTY(EditAnywhere, Category = "Combat|UI")
+	TSubclassOf<UCombatHUDWidget> CombatHUDWidgetClass;
+
+	UPROPERTY()
+	TObjectPtr<UCombatHUDWidget> CombatHUDWidget;
 
 	/** Mobile controls widget to spawn */
 	UPROPERTY(EditAnywhere, Category="Input|Touch Controls")
@@ -51,7 +68,11 @@ protected:
 	virtual void SetupInputComponent() override;
 
 	void HandleBattleStateChanged(EBattleState PreviousState, EBattleState NewState);
+	void HandleBasicAttackInput();
+	void HandlePowerStrikeInput();
 	void SetExplorationInputEnabled(bool bEnabled);
+	void SetPlayerCommandInputEnabled(bool bEnabled);
+	void SetBattleInteractionEnabled(bool bEnabled);
 
 
 	/** Returns true if the player should use UMG touch controls */
@@ -59,5 +80,7 @@ protected:
 
 	FDelegateHandle BattleStateChangedHandle;
 	bool bExplorationInputEnabled = false;
+	bool bPlayerCommandInputEnabled = false;
+	bool bBattleInteractionEnabled = false;
 
 };
