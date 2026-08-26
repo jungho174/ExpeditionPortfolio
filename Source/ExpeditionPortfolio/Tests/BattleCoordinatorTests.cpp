@@ -8,6 +8,7 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
+#include "CoreGlobals.h"
 #include "Misc/AutomationTest.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
@@ -29,6 +30,12 @@ namespace
 				false,
 				WorldName,
 				GetTransientPackage());
+
+			if (World != nullptr)
+			{
+				++GFrameCounter;
+				World->GetTimerManager().Tick(0.0f);
+			}
 		}
 
 		~FScopedBattleTestWorld()
@@ -60,6 +67,28 @@ namespace
 		Owner->AddInstanceComponent(Combatant);
 		Combatant->RegisterComponent();
 		return Combatant;
+	}
+
+	void AdvanceBattleTime(UWorld* World, const float DeltaSeconds)
+	{
+		++GFrameCounter;
+		World->GetTimerManager().Tick(DeltaSeconds);
+	}
+
+	void AdvanceToDefenseWindow(UWorld* World)
+	{
+		AdvanceBattleTime(World, 1.01f);
+	}
+
+	void ExpireDefenseWindow(UWorld* World)
+	{
+		AdvanceBattleTime(World, 0.61f);
+	}
+
+	void CompleteNoInputEnemyTurn(UWorld* World)
+	{
+		AdvanceToDefenseWindow(World);
+		ExpireDefenseWindow(World);
 	}
 }
 
@@ -477,21 +506,28 @@ bool FBattleCoordinatorMinimalTurnLoopTest::RunTest(const FString& Parameters)
 		EAutomationExpectedErrorFlags::Contains,
 		1);
 
-	TestTrue(TEXT("A valid basic attack should complete one round"), Coordinator->RequestPlayerBasicAttack());
+	TestTrue(TEXT("A valid basic attack should begin one round"), Coordinator->RequestPlayerBasicAttack());
 	TestFalse(TEXT("A reentrant command should be rejected"), bReentrantResult);
-	TestEqual(TEXT("The round should return to PlayerCommand"), Coordinator->GetCurrentState(), EBattleState::PlayerCommand);
+	TestEqual(TEXT("The enemy turn should wait in Telegraph"), Coordinator->GetCurrentState(), EBattleState::EnemyTelegraph);
 	TestEqual(TEXT("Player attack should deal damage once"), EnemyCombatant->GetCurrentHealth(), 75.0f);
-	TestEqual(TEXT("Enemy attack should deal damage once"), PlayerCombatant->GetCurrentHealth(), 80.0f);
-	TestEqual(TEXT("One round should publish six state changes"), Notifications.Num(), 6);
+	TestEqual(TEXT("Telegraph should not damage the player"), PlayerCombatant->GetCurrentHealth(), 100.0f);
 
-	if (Notifications.Num() == 6)
+	AdvanceToDefenseWindow(World);
+	TestEqual(TEXT("Telegraph completion should open DefenseWindow"), Coordinator->GetCurrentState(), EBattleState::DefenseWindow);
+	TestTrue(TEXT("Dodge should resolve the defense window"), Coordinator->RequestDodge());
+	TestEqual(TEXT("A successful dodge should return to PlayerCommand"), Coordinator->GetCurrentState(), EBattleState::PlayerCommand);
+	TestEqual(TEXT("A successful dodge should prevent enemy damage"), PlayerCombatant->GetCurrentHealth(), 100.0f);
+	TestEqual(TEXT("One defended round should publish seven state changes"), Notifications.Num(), 7);
+
+	if (Notifications.Num() == 7)
 	{
 		TestEqual(TEXT("Round should enter PlayerAction"), Notifications[0].Value, EBattleState::PlayerAction);
 		TestEqual(TEXT("Player action should enter TurnEnd"), Notifications[1].Value, EBattleState::TurnEnd);
 		TestEqual(TEXT("Enemy turn should enter Telegraph"), Notifications[2].Value, EBattleState::EnemyTelegraph);
 		TestEqual(TEXT("Telegraph should enter EnemyAction"), Notifications[3].Value, EBattleState::EnemyAction);
-		TestEqual(TEXT("Enemy action should enter TurnEnd"), Notifications[4].Value, EBattleState::TurnEnd);
-		TestEqual(TEXT("Round should return to PlayerCommand"), Notifications[5].Value, EBattleState::PlayerCommand);
+		TestEqual(TEXT("Enemy action should open DefenseWindow"), Notifications[4].Value, EBattleState::DefenseWindow);
+		TestEqual(TEXT("Defense should enter TurnEnd"), Notifications[5].Value, EBattleState::TurnEnd);
+		TestEqual(TEXT("Round should return to PlayerCommand"), Notifications[6].Value, EBattleState::PlayerCommand);
 	}
 
 	Coordinator->OnBattleStateChanged().Remove(DelegateHandle);
@@ -525,8 +561,11 @@ bool FBattleCoordinatorVictoryCleanupTest::RunTest(const FString& Parameters)
 
 	TestTrue(TEXT("Battle start should succeed"), Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
 	TestTrue(TEXT("First round should succeed"), Coordinator->RequestPlayerBasicAttack());
+	CompleteNoInputEnemyTurn(World);
 	TestTrue(TEXT("Second round should succeed"), Coordinator->RequestPlayerBasicAttack());
+	CompleteNoInputEnemyTurn(World);
 	TestTrue(TEXT("Third round should succeed"), Coordinator->RequestPlayerBasicAttack());
+	CompleteNoInputEnemyTurn(World);
 	TestTrue(TEXT("Lethal fourth attack should complete victory cleanup"), Coordinator->RequestPlayerBasicAttack());
 
 	TestEqual(TEXT("Victory should return to Exploration"), Coordinator->GetCurrentState(), EBattleState::Exploration);
@@ -567,7 +606,8 @@ bool FBattleCoordinatorDefeatTest::RunTest(const FString& Parameters)
 
 	TestTrue(TEXT("Setup damage should leave the player alive"), PlayerCombatant->ApplyDamage(80.0f));
 	TestTrue(TEXT("Battle start should accept a living player"), Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
-	TestTrue(TEXT("The defeating round should complete"), Coordinator->RequestPlayerBasicAttack());
+	TestTrue(TEXT("The defeating round should begin"), Coordinator->RequestPlayerBasicAttack());
+	CompleteNoInputEnemyTurn(World);
 	TestEqual(TEXT("Defeated player should leave the battle in Defeat"), Coordinator->GetCurrentState(), EBattleState::Defeat);
 	TestEqual(TEXT("Enemy attack should defeat the player"), PlayerCombatant->GetCurrentHealth(), 0.0f);
 	TestEqual(TEXT("Player attack should damage the enemy first"), EnemyCombatant->GetCurrentHealth(), 75.0f);
@@ -715,13 +755,15 @@ bool FBattleCoordinatorPlayerCommandsTest::RunTest(const FString& Parameters)
 		});
 
 	TestTrue(
-		TEXT("Power Strike should complete one round"),
+		TEXT("Power Strike should begin one round"),
 		Coordinator->RequestPlayerCommand(EBattlePlayerCommand::PowerStrike));
 	TestEqual(TEXT("Power Strike should deal 40 damage"), EnemyCombatant->GetCurrentHealth(), 60.0f);
-	TestEqual(TEXT("The enemy should counterattack once"), PlayerCombatant->GetCurrentHealth(), 80.0f);
+	TestEqual(TEXT("The enemy should wait before counterattacking"), PlayerCombatant->GetCurrentHealth(), 100.0f);
 	TestFalse(
 		TEXT("Power Strike should be unavailable after use"),
 		Coordinator->CanRequestPlayerCommand(EBattlePlayerCommand::PowerStrike));
+	CompleteNoInputEnemyTurn(World);
+	TestEqual(TEXT("The enemy should counterattack after no input"), PlayerCombatant->GetCurrentHealth(), 80.0f);
 	TestTrue(
 		TEXT("The PlayerCommand event should expose Basic Attack as available"),
 		bBasicAttackAvailableAtPlayerCommandEvent);
@@ -734,7 +776,9 @@ bool FBattleCoordinatorPlayerCommandsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("A rejected command should not deal damage"), EnemyCombatant->GetCurrentHealth(), 60.0f);
 
 	TestTrue(TEXT("First basic attack should succeed"), Coordinator->RequestPlayerBasicAttack());
+	CompleteNoInputEnemyTurn(World);
 	TestTrue(TEXT("Second basic attack should succeed"), Coordinator->RequestPlayerBasicAttack());
+	CompleteNoInputEnemyTurn(World);
 	TestTrue(TEXT("The lethal basic attack should succeed"), Coordinator->RequestPlayerBasicAttack());
 	TestEqual(TEXT("Victory should return to Exploration"), Coordinator->GetCurrentState(), EBattleState::Exploration);
 
@@ -749,13 +793,250 @@ bool FBattleCoordinatorPlayerCommandsTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
+	bool bDefenseResultResetForNewBattle = false;
+	const FDelegateHandle DefenseResetHandle = Coordinator->OnDefenseResultChanged().AddLambda(
+		[&bDefenseResultResetForNewBattle](const EBattleDefenseResult Result)
+		{
+			bDefenseResultResetForNewBattle = Result == EBattleDefenseResult::None;
+		});
 	TestTrue(
 		TEXT("A new battle should start after victory cleanup"),
 		Coordinator->RequestBattleStart(SecondEncounterSource, SecondPlayerPawn, SecondEnemyActor));
 	TestTrue(
 		TEXT("A new battle should reset Power Strike availability"),
 		Coordinator->CanRequestPlayerCommand(EBattlePlayerCommand::PowerStrike));
+	TestEqual(
+		TEXT("A new battle should reset the previous defense result"),
+		Coordinator->GetLastDefenseResult(),
+		EBattleDefenseResult::None);
+	TestTrue(TEXT("Defense result reset should be published for the HUD"), bDefenseResultResetForNewBattle);
+	Coordinator->OnDefenseResultChanged().Remove(DefenseResetHandle);
 	Coordinator->OnBattleStateChanged().Remove(AvailabilityHandle);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBattleCoordinatorDefenseOutcomesTest,
+	"ExpeditionPortfolio.Combat.BattleCoordinator.DefenseOutcomes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBattleCoordinatorDefenseOutcomesTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FScopedBattleTestWorld TestWorld;
+	UBattleCoordinator* Coordinator = TestWorld.GetCoordinator();
+	UWorld* World = TestWorld.GetWorld();
+	AActor* EncounterSource = World->SpawnActor<AActor>();
+	APawn* PlayerPawn = World->SpawnActor<APawn>();
+	AActor* EnemyActor = World->SpawnActor<AActor>();
+	UCombatantComponent* PlayerCombatant = AddCombatantComponent(PlayerPawn);
+	UCombatantComponent* EnemyCombatant = AddCombatantComponent(EnemyActor);
+
+	if (!TestNotNull(TEXT("Coordinator should exist"), Coordinator)
+		|| !TestNotNull(TEXT("Player combatant should exist"), PlayerCombatant)
+		|| !TestNotNull(TEXT("Enemy combatant should exist"), EnemyCombatant))
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Battle start should succeed"), Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
+
+	TestTrue(TEXT("First player attack should begin Telegraph"), Coordinator->RequestPlayerBasicAttack());
+	AdvanceToDefenseWindow(World);
+	TestTrue(
+		TEXT("Parry should be available in DefenseWindow"),
+		Coordinator->CanRequestDefenseCommand(EBattleDefenseCommand::Parry));
+	AdvanceBattleTime(World, 0.2f);
+	TestTrue(TEXT("A parry on the success boundary should succeed"), Coordinator->RequestParry());
+	TestEqual(TEXT("Boundary parry should publish ParrySuccess"), Coordinator->GetLastDefenseResult(), EBattleDefenseResult::ParrySuccess);
+	TestEqual(TEXT("Parry should prevent player damage"), PlayerCombatant->GetCurrentHealth(), 100.0f);
+	TestEqual(TEXT("Parry should counter for 15 damage"), EnemyCombatant->GetCurrentHealth(), 60.0f);
+	TestEqual(TEXT("Successful parry should return PlayerCommand"), Coordinator->GetCurrentState(), EBattleState::PlayerCommand);
+
+	TestTrue(TEXT("Second player attack should begin Telegraph"), Coordinator->RequestPlayerBasicAttack());
+	AdvanceToDefenseWindow(World);
+	AdvanceBattleTime(World, 0.21f);
+	TestTrue(TEXT("A late parry input should resolve as failure"), Coordinator->RequestParry());
+	TestEqual(TEXT("Late parry should publish Failed"), Coordinator->GetLastDefenseResult(), EBattleDefenseResult::Failed);
+	TestEqual(TEXT("Failed parry should apply enemy damage"), PlayerCombatant->GetCurrentHealth(), 80.0f);
+	TestEqual(TEXT("Failed parry should not counter"), EnemyCombatant->GetCurrentHealth(), 35.0f);
+
+	TestTrue(TEXT("Third player attack should begin Telegraph"), Coordinator->RequestPlayerBasicAttack());
+	AdvanceToDefenseWindow(World);
+	TestTrue(
+		TEXT("Dodge should be available in DefenseWindow"),
+		Coordinator->CanRequestDefenseCommand(EBattleDefenseCommand::Dodge));
+	TestTrue(TEXT("Dodge should succeed during DefenseWindow"), Coordinator->RequestDodge());
+	TestEqual(TEXT("Dodge should publish DodgeSuccess"), Coordinator->GetLastDefenseResult(), EBattleDefenseResult::DodgeSuccess);
+	TestEqual(TEXT("Dodge should prevent player damage"), PlayerCombatant->GetCurrentHealth(), 80.0f);
+	TestEqual(TEXT("Dodge should not counter"), EnemyCombatant->GetCurrentHealth(), 10.0f);
+	TestEqual(TEXT("Successful dodge should return PlayerCommand"), Coordinator->GetCurrentState(), EBattleState::PlayerCommand);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBattleCoordinatorDefenseNoInputDefeatTest,
+	"ExpeditionPortfolio.Combat.BattleCoordinator.DefenseNoInputDefeat",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBattleCoordinatorDefenseNoInputDefeatTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FScopedBattleTestWorld TestWorld;
+	UBattleCoordinator* Coordinator = TestWorld.GetCoordinator();
+	UWorld* World = TestWorld.GetWorld();
+	AActor* EncounterSource = World->SpawnActor<AActor>();
+	APawn* PlayerPawn = World->SpawnActor<APawn>();
+	AActor* EnemyActor = World->SpawnActor<AActor>();
+	UCombatantComponent* PlayerCombatant = AddCombatantComponent(PlayerPawn);
+	UCombatantComponent* EnemyCombatant = AddCombatantComponent(EnemyActor);
+
+	if (!TestNotNull(TEXT("Coordinator should exist"), Coordinator)
+		|| !TestNotNull(TEXT("Player combatant should exist"), PlayerCombatant)
+		|| !TestNotNull(TEXT("Enemy combatant should exist"), EnemyCombatant))
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Setup damage should leave 20 health"), PlayerCombatant->ApplyDamage(80.0f));
+	TestTrue(TEXT("Battle start should succeed"), Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
+	TestTrue(TEXT("Player attack should begin the enemy turn"), Coordinator->RequestPlayerBasicAttack());
+	AdvanceToDefenseWindow(World);
+	TestEqual(TEXT("Telegraph should open DefenseWindow"), Coordinator->GetCurrentState(), EBattleState::DefenseWindow);
+	ExpireDefenseWindow(World);
+
+	TestEqual(TEXT("Timeout should publish NoInput"), Coordinator->GetLastDefenseResult(), EBattleDefenseResult::NoInput);
+	TestEqual(TEXT("No input should defeat the player"), PlayerCombatant->GetCurrentHealth(), 0.0f);
+	TestEqual(TEXT("Defeated player should remain in Defeat"), Coordinator->GetCurrentState(), EBattleState::Defeat);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBattleCoordinatorParryCounterVictoryTest,
+	"ExpeditionPortfolio.Combat.BattleCoordinator.ParryCounterVictory",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBattleCoordinatorParryCounterVictoryTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FScopedBattleTestWorld TestWorld;
+	UBattleCoordinator* Coordinator = TestWorld.GetCoordinator();
+	UWorld* World = TestWorld.GetWorld();
+	AActor* EncounterSource = World->SpawnActor<AActor>();
+	APawn* PlayerPawn = World->SpawnActor<APawn>();
+	AActor* EnemyActor = World->SpawnActor<AActor>();
+	UCombatantComponent* PlayerCombatant = AddCombatantComponent(PlayerPawn);
+	UCombatantComponent* EnemyCombatant = AddCombatantComponent(EnemyActor);
+
+	if (!TestNotNull(TEXT("Coordinator should exist"), Coordinator)
+		|| !TestNotNull(TEXT("Player combatant should exist"), PlayerCombatant)
+		|| !TestNotNull(TEXT("Enemy combatant should exist"), EnemyCombatant))
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Setup damage should leave enemy at 40"), EnemyCombatant->ApplyDamage(60.0f));
+	TestTrue(TEXT("Battle start should succeed"), Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
+	TestTrue(TEXT("Basic attack should leave enemy at 15"), Coordinator->RequestPlayerBasicAttack());
+	AdvanceToDefenseWindow(World);
+	TestTrue(TEXT("Parry should resolve the lethal counter"), Coordinator->RequestParry());
+
+	TestEqual(TEXT("Parry counter should defeat enemy"), EnemyCombatant->GetCurrentHealth(), 0.0f);
+	TestEqual(TEXT("Lethal parry should not damage player"), PlayerCombatant->GetCurrentHealth(), 100.0f);
+	TestEqual(TEXT("Lethal parry should return Exploration"), Coordinator->GetCurrentState(), EBattleState::Exploration);
+	TestNull(TEXT("Victory cleanup should clear encounter"), Coordinator->GetActiveEncounterSource());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBattleCoordinatorDefenseReentrancyTest,
+	"ExpeditionPortfolio.Combat.BattleCoordinator.DefenseReentrancy",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBattleCoordinatorDefenseReentrancyTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FScopedBattleTestWorld TestWorld;
+	UBattleCoordinator* Coordinator = TestWorld.GetCoordinator();
+	UWorld* World = TestWorld.GetWorld();
+	AActor* EncounterSource = World->SpawnActor<AActor>();
+	APawn* PlayerPawn = World->SpawnActor<APawn>();
+	AActor* EnemyActor = World->SpawnActor<AActor>();
+	UCombatantComponent* PlayerCombatant = AddCombatantComponent(PlayerPawn);
+	UCombatantComponent* EnemyCombatant = AddCombatantComponent(EnemyActor);
+
+	if (!TestNotNull(TEXT("Coordinator should exist"), Coordinator)
+		|| !TestNotNull(TEXT("Player combatant should exist"), PlayerCombatant)
+		|| !TestNotNull(TEXT("Enemy combatant should exist"), EnemyCombatant))
+	{
+		return false;
+	}
+
+	AddExpectedError(
+		TEXT("Rejected battle command 'RequestDefenseCommand'"),
+		EAutomationExpectedErrorFlags::Contains,
+		2);
+	TestTrue(TEXT("Battle start should succeed"), Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
+	TestFalse(TEXT("Defense input outside DefenseWindow should be rejected"), Coordinator->RequestParry());
+	TestTrue(TEXT("Player attack should begin enemy turn"), Coordinator->RequestPlayerBasicAttack());
+	AdvanceToDefenseWindow(World);
+
+	bool bReentrantDefenseResult = true;
+	const FDelegateHandle DefenseHandle = Coordinator->OnDefenseResultChanged().AddLambda(
+		[Coordinator, &bReentrantDefenseResult](const EBattleDefenseResult Result)
+		{
+			if (Result == EBattleDefenseResult::ParrySuccess)
+			{
+				bReentrantDefenseResult = Coordinator->RequestDodge();
+			}
+		});
+
+	TestTrue(TEXT("First defense input should resolve"), Coordinator->RequestParry());
+	TestFalse(TEXT("Reentrant defense input should be rejected"), bReentrantDefenseResult);
+	TestEqual(TEXT("Only first result should be retained"), Coordinator->GetLastDefenseResult(), EBattleDefenseResult::ParrySuccess);
+	TestEqual(TEXT("Resolved defense should return PlayerCommand"), Coordinator->GetCurrentState(), EBattleState::PlayerCommand);
+	Coordinator->OnDefenseResultChanged().Remove(DefenseHandle);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBattleCoordinatorInvalidTelegraphParticipantTest,
+	"ExpeditionPortfolio.Combat.BattleCoordinator.InvalidTelegraphParticipant",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBattleCoordinatorInvalidTelegraphParticipantTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FScopedBattleTestWorld TestWorld;
+	UBattleCoordinator* Coordinator = TestWorld.GetCoordinator();
+	UWorld* World = TestWorld.GetWorld();
+	AActor* EncounterSource = World->SpawnActor<AActor>();
+	APawn* PlayerPawn = World->SpawnActor<APawn>();
+	AActor* EnemyActor = World->SpawnActor<AActor>();
+	UCombatantComponent* PlayerCombatant = AddCombatantComponent(PlayerPawn);
+	UCombatantComponent* EnemyCombatant = AddCombatantComponent(EnemyActor);
+
+	if (!TestNotNull(TEXT("Coordinator should exist"), Coordinator)
+		|| !TestNotNull(TEXT("Player combatant should exist"), PlayerCombatant)
+		|| !TestNotNull(TEXT("Enemy combatant should exist"), EnemyCombatant))
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Battle start should succeed"), Coordinator->RequestBattleStart(EncounterSource, PlayerPawn, EnemyActor));
+	TestTrue(TEXT("Player attack should schedule Telegraph"), Coordinator->RequestPlayerBasicAttack());
+	EnemyCombatant->DestroyComponent();
+	AdvanceToDefenseWindow(World);
+
+	TestEqual(TEXT("Invalid timer participant should return Exploration"), Coordinator->GetCurrentState(), EBattleState::Exploration);
+	TestNull(TEXT("Invalid timer participant should clear encounter"), Coordinator->GetActiveEncounterSource());
+	AdvanceBattleTime(World, 1.0f);
+	TestEqual(TEXT("Cleared timer should not change later state"), Coordinator->GetCurrentState(), EBattleState::Exploration);
 	return true;
 }
 #endif

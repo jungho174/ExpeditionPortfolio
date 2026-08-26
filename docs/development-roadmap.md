@@ -47,6 +47,8 @@
 
 완료 기준: 같은 적 공격에 대해 패링, 회피, 피격 결과가 재현 가능하게 구분된다.
 
+현재 C++ 기반은 Timer 기반 `EnemyTelegraph -> EnemyAction -> DefenseWindow` 흐름, 패링/회피/실패/미입력 판정, 패링 반격, 상태별 방어 입력 Context 전환, HUD용 방어 명령과 결과 Event까지 구현됐다. 경계 시간, 무입력 패배, 패링 반격 승리, 중복·재진입 입력, Timer 도중 참가자 무효화도 자동화 테스트로 검증한다. Milestone 3의 플레이 가능한 완료에는 `IA_Parry`, `IA_Dodge`, `IMC_DefenseWindow` 에셋 조립, PlayerController 지정, `WBP_CombatHUD` 방어 버튼/결과 표시 추가와 PIE 수동 검증이 남아 있다.
+
 ## Milestone 4 — 몬스터 패턴 데이터화 (1~2주)
 
 목표: 코드 수정 없이 적 공격의 시간과 수치를 교체할 수 있게 한다.

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Blueprint/UserWidget.h"
+#include "Combat/BattleDefense.h"
 #include "Combat/BattlePlayerCommand.h"
 #include "Combat/BattleState.h"
 #include "CoreMinimal.h"
@@ -26,6 +27,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat|Commands")
 	bool RequestPowerStrike();
 
+	UFUNCTION(BlueprintCallable, Category = "Combat|Commands")
+	bool RequestDefenseCommand(EBattleDefenseCommand Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Combat|Commands")
+	bool RequestParry();
+
+	UFUNCTION(BlueprintCallable, Category = "Combat|Commands")
+	bool RequestDodge();
+
 protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
@@ -40,8 +50,12 @@ protected:
 		bool bCanUseBasicAttack,
 		bool bCanUsePowerStrike);
 
+	UFUNCTION(BlueprintImplementableEvent, Category = "Combat|Presentation", meta = (DisplayName = "Defense Result Updated"))
+	void BP_OnDefenseResultUpdated(EBattleDefenseResult Result);
+
 private:
 	void HandleBattleStateChanged(EBattleState PreviousState, EBattleState NewState);
+	void HandleDefenseResultChanged(EBattleDefenseResult Result);
 	void HandleCombatantHealthChanged(float PreviousHealth, float NewHealth);
 	void HandleCombatantDefeated();
 	void BindActiveCombatants();
@@ -52,6 +66,7 @@ private:
 	TWeakObjectPtr<UCombatantComponent> PlayerCombatant;
 	TWeakObjectPtr<UCombatantComponent> EnemyCombatant;
 	FDelegateHandle BattleStateChangedHandle;
+	FDelegateHandle DefenseResultChangedHandle;
 	FDelegateHandle PlayerHealthChangedHandle;
 	FDelegateHandle PlayerDefeatedHandle;
 	FDelegateHandle EnemyHealthChangedHandle;

@@ -3,9 +3,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Combat/BattleDefense.h"
 #include "Combat/BattlePlayerCommand.h"
 #include "Combat/BattleState.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "TimerManager.h"
 #include "BattleCoordinator.generated.h"
 
 class AActor;
@@ -23,6 +25,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FOnBattleStateChangedBlueprint,
 	EBattleState, PreviousState,
 	EBattleState, NewState);
+
+DECLARE_MULTICAST_DELEGATE_OneParam(
+	FOnDefenseResultChanged,
+	EBattleDefenseResult /* Result */);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnDefenseResultChangedBlueprint,
+	EBattleDefenseResult, Result);
 
 UCLASS(BlueprintType)
 class EXPEDITIONPORTFOLIO_API UBattleCoordinator : public UWorldSubsystem
@@ -48,6 +58,21 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Battle")
 	bool CanRequestPlayerCommand(EBattlePlayerCommand Command) const;
 
+	UFUNCTION(BlueprintCallable, Category = "Combat|Battle")
+	bool RequestDefenseCommand(EBattleDefenseCommand Command);
+
+	UFUNCTION(BlueprintCallable, Category = "Combat|Battle")
+	bool RequestParry();
+
+	UFUNCTION(BlueprintCallable, Category = "Combat|Battle")
+	bool RequestDodge();
+
+	UFUNCTION(BlueprintPure, Category = "Combat|Battle")
+	bool CanRequestDefenseCommand(EBattleDefenseCommand Command) const;
+
+	UFUNCTION(BlueprintPure, Category = "Combat|Battle")
+	EBattleDefenseResult GetLastDefenseResult() const { return LastDefenseResult; }
+
 	bool RequestBattleStart(AActor* EncounterSource, APawn* PlayerPawn, AActor* EnemyActor);
 
 	UFUNCTION(BlueprintPure, Category = "Combat|Battle")
@@ -66,9 +91,13 @@ public:
 	UCombatantComponent* GetEnemyCombatant() const { return EnemyCombatant.Get(); }
 
 	FOnBattleStateChanged& OnBattleStateChanged() { return BattleStateChanged; }
+	FOnDefenseResultChanged& OnDefenseResultChanged() { return DefenseResultChanged; }
 
 	UPROPERTY(BlueprintAssignable, Category = "Combat|Battle")
 	FOnBattleStateChangedBlueprint BattleStateChangedBlueprint;
+
+	UPROPERTY(BlueprintAssignable, Category = "Combat|Battle")
+	FOnDefenseResultChangedBlueprint DefenseResultChangedBlueprint;
 
 protected:
 	virtual bool DoesSupportWorldType(EWorldType::Type WorldType) const override;
@@ -91,7 +120,12 @@ private:
 
 	bool HasValidActiveBattle() const;
 	bool ExecutePlayerCommand(EBattlePlayerCommand Command);
-	bool ExecuteEnemyTurn();
+	bool StartEnemyTelegraph();
+	void HandleEnemyTelegraphFinished();
+	void HandleDefenseWindowExpired();
+	bool ResolveDefenseOutcome(EBattleDefenseResult Result);
+	void SetDefenseResult(EBattleDefenseResult Result);
+	void ClearBattleTimers();
 	bool ResolveTurnEnd(ECompletedAction CompletedAction);
 	bool ReturnToExploration();
 	void ClearBattleContext();
@@ -103,6 +137,10 @@ private:
 	TWeakObjectPtr<UCombatantComponent> PlayerCombatant;
 	TWeakObjectPtr<UCombatantComponent> EnemyCombatant;
 	FOnBattleStateChanged BattleStateChanged;
+	FOnDefenseResultChanged DefenseResultChanged;
+	FTimerHandle EnemyTelegraphTimerHandle;
+	FTimerHandle DefenseWindowTimerHandle;
+	EBattleDefenseResult LastDefenseResult = EBattleDefenseResult::None;
 	bool bTransitionInProgress = false;
 	bool bActionInProgress = false;
 	bool bPowerStrikeUsed = false;
@@ -110,4 +148,8 @@ private:
 	static constexpr float PlayerBasicAttackDamage = 25.0f;
 	static constexpr float PlayerPowerStrikeDamage = 40.0f;
 	static constexpr float EnemyBasicAttackDamage = 20.0f;
+	static constexpr float ParryCounterDamage = 15.0f;
+	static constexpr float EnemyTelegraphDuration = 1.0f;
+	static constexpr float DefenseWindowDuration = 0.6f;
+	static constexpr float ParrySuccessDuration = 0.2f;
 };

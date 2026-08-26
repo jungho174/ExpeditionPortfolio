@@ -40,6 +40,15 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Input|Combat")
 	TObjectPtr<UInputAction> PowerStrikeInputAction;
 
+	UPROPERTY(EditAnywhere, Category = "Input|Combat")
+	TObjectPtr<UInputMappingContext> DefenseMappingContext;
+
+	UPROPERTY(EditAnywhere, Category = "Input|Combat")
+	TObjectPtr<UInputAction> ParryInputAction;
+
+	UPROPERTY(EditAnywhere, Category = "Input|Combat")
+	TObjectPtr<UInputAction> DodgeInputAction;
+
 	UPROPERTY(EditAnywhere, Category = "Combat|UI")
 	TSubclassOf<UCombatHUDWidget> CombatHUDWidgetClass;
 
@@ -70,8 +79,11 @@ protected:
 	void HandleBattleStateChanged(EBattleState PreviousState, EBattleState NewState);
 	void HandleBasicAttackInput();
 	void HandlePowerStrikeInput();
+	void HandleParryInput();
+	void HandleDodgeInput();
 	void SetExplorationInputEnabled(bool bEnabled);
 	void SetPlayerCommandInputEnabled(bool bEnabled);
+	void SetDefenseInputEnabled(bool bEnabled);
 	void SetBattleInteractionEnabled(bool bEnabled);
 
 
@@ -81,6 +93,7 @@ protected:
 	FDelegateHandle BattleStateChangedHandle;
 	bool bExplorationInputEnabled = false;
 	bool bPlayerCommandInputEnabled = false;
+	bool bDefenseInputEnabled = false;
 	bool bBattleInteractionEnabled = false;
 
 };

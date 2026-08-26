@@ -3,6 +3,7 @@
 #include "Combat/BattleCoordinator.h"
 
 #include "Combat/CombatantComponent.h"
+#include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "UObject/EnumProperty.h"
 
@@ -21,6 +22,8 @@ void UBattleCoordinator::Deinitialize()
 {
 	BattleStateChanged.Clear();
 	BattleStateChangedBlueprint.Clear();
+	DefenseResultChanged.Clear();
+	DefenseResultChangedBlueprint.Clear();
 	ClearBattleContext();
 	bTransitionInProgress = false;
 	bActionInProgress = false;
@@ -153,6 +156,7 @@ bool UBattleCoordinator::RequestBattleStart(AActor* EncounterSource, APawn* Play
 	PlayerCombatant = FoundPlayerCombatant;
 	EnemyCombatant = FoundEnemyCombatant;
 	bPowerStrikeUsed = false;
+	SetDefenseResult(EBattleDefenseResult::None);
 
 	if (!TryTransitionTo(EBattleState::BattleIntro))
 	{
@@ -248,6 +252,79 @@ bool UBattleCoordinator::RequestPlayerCommand(const EBattlePlayerCommand Command
 	return ExecutePlayerCommand(Command);
 }
 
+bool UBattleCoordinator::RequestParry()
+{
+	return RequestDefenseCommand(EBattleDefenseCommand::Parry);
+}
+
+bool UBattleCoordinator::RequestDodge()
+{
+	return RequestDefenseCommand(EBattleDefenseCommand::Dodge);
+}
+
+bool UBattleCoordinator::CanRequestDefenseCommand(const EBattleDefenseCommand Command) const
+{
+	if (CurrentState != EBattleState::DefenseWindow || !HasValidActiveBattle())
+	{
+		return false;
+	}
+
+	return Command == EBattleDefenseCommand::Parry || Command == EBattleDefenseCommand::Dodge;
+}
+
+bool UBattleCoordinator::RequestDefenseCommand(const EBattleDefenseCommand Command)
+{
+	if (bTransitionInProgress || bActionInProgress)
+	{
+		LogRejectedCommand(TEXT("RequestDefenseCommand"), TEXT("another battle operation is in progress"));
+		return false;
+	}
+
+	if (CurrentState != EBattleState::DefenseWindow)
+	{
+		LogRejectedCommand(TEXT("RequestDefenseCommand"), TEXT("current state is not DefenseWindow"));
+		return false;
+	}
+
+	if (!HasValidActiveBattle())
+	{
+		LogRejectedCommand(TEXT("RequestDefenseCommand"), TEXT("active battle participants are invalid or defeated"));
+		ReturnToExploration();
+		return false;
+	}
+
+	if (Command != EBattleDefenseCommand::Parry && Command != EBattleDefenseCommand::Dodge)
+	{
+		LogRejectedCommand(TEXT("RequestDefenseCommand"), TEXT("the requested defense command is not supported"));
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		ReturnToExploration();
+		return false;
+	}
+
+	const float ElapsedTime = World->GetTimerManager().GetTimerElapsed(DefenseWindowTimerHandle);
+	if (ElapsedTime < 0.0f)
+	{
+		LogRejectedCommand(TEXT("RequestDefenseCommand"), TEXT("the defense timer is not active"));
+		ReturnToExploration();
+		return false;
+	}
+
+	World->GetTimerManager().ClearTimer(DefenseWindowTimerHandle);
+	const EBattleDefenseResult Result = Command == EBattleDefenseCommand::Dodge
+		? EBattleDefenseResult::DodgeSuccess
+		: ElapsedTime <= ParrySuccessDuration
+			? EBattleDefenseResult::ParrySuccess
+			: EBattleDefenseResult::Failed;
+
+	TGuardValue<bool> ActionGuard(bActionInProgress, true);
+	return ResolveDefenseOutcome(Result);
+}
+
 bool UBattleCoordinator::ExecutePlayerCommand(const EBattlePlayerCommand Command)
 {
 	const float Damage = Command == EBattlePlayerCommand::PowerStrike
@@ -316,6 +393,11 @@ bool UBattleCoordinator::IsTransitionAllowed(const EBattleState NewState) const
 			|| NewState == EBattleState::ReturnToField;
 
 	case EBattleState::EnemyAction:
+		return NewState == EBattleState::DefenseWindow
+			|| NewState == EBattleState::TurnEnd
+			|| NewState == EBattleState::ReturnToField;
+
+	case EBattleState::DefenseWindow:
 		return NewState == EBattleState::TurnEnd
 			|| NewState == EBattleState::ReturnToField;
 
@@ -349,7 +431,7 @@ bool UBattleCoordinator::HasValidActiveBattle() const
 		&& !EnemyCombatant->IsDefeated();
 }
 
-bool UBattleCoordinator::ExecuteEnemyTurn()
+bool UBattleCoordinator::StartEnemyTelegraph()
 {
 	if (!HasValidActiveBattle())
 	{
@@ -357,16 +439,91 @@ bool UBattleCoordinator::ExecuteEnemyTurn()
 		return false;
 	}
 
-	if (!TryTransitionTo(EBattleState::EnemyAction))
+	UWorld* World = GetWorld();
+	if (World == nullptr)
 	{
 		ReturnToExploration();
 		return false;
 	}
 
-	if (!PlayerCombatant->ApplyDamage(EnemyBasicAttackDamage))
+	SetDefenseResult(EBattleDefenseResult::None);
+	World->GetTimerManager().SetTimer(
+		EnemyTelegraphTimerHandle,
+		this,
+		&ThisClass::HandleEnemyTelegraphFinished,
+		EnemyTelegraphDuration,
+		false);
+	return true;
+}
+
+void UBattleCoordinator::HandleEnemyTelegraphFinished()
+{
+	EnemyTelegraphTimerHandle.Invalidate();
+
+	if (CurrentState != EBattleState::EnemyTelegraph || !HasValidActiveBattle())
 	{
 		ReturnToExploration();
+		return;
+	}
+
+	if (!TryTransitionTo(EBattleState::EnemyAction)
+		|| !TryTransitionTo(EBattleState::DefenseWindow))
+	{
+		ReturnToExploration();
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		ReturnToExploration();
+		return;
+	}
+
+	World->GetTimerManager().SetTimer(
+		DefenseWindowTimerHandle,
+		this,
+		&ThisClass::HandleDefenseWindowExpired,
+		DefenseWindowDuration,
+		false);
+}
+
+void UBattleCoordinator::HandleDefenseWindowExpired()
+{
+	DefenseWindowTimerHandle.Invalidate();
+	if (CurrentState != EBattleState::DefenseWindow || !HasValidActiveBattle())
+	{
+		ReturnToExploration();
+		return;
+	}
+
+	TGuardValue<bool> ActionGuard(bActionInProgress, true);
+	ResolveDefenseOutcome(EBattleDefenseResult::NoInput);
+}
+
+bool UBattleCoordinator::ResolveDefenseOutcome(const EBattleDefenseResult Result)
+{
+	if (CurrentState != EBattleState::DefenseWindow)
+	{
 		return false;
+	}
+
+	SetDefenseResult(Result);
+	if (Result == EBattleDefenseResult::ParrySuccess)
+	{
+		if (!EnemyCombatant->ApplyDamage(ParryCounterDamage))
+		{
+			ReturnToExploration();
+			return false;
+		}
+	}
+	else if (Result == EBattleDefenseResult::Failed || Result == EBattleDefenseResult::NoInput)
+	{
+		if (!PlayerCombatant->ApplyDamage(EnemyBasicAttackDamage))
+		{
+			ReturnToExploration();
+			return false;
+		}
 	}
 
 	if (!TryTransitionTo(EBattleState::TurnEnd))
@@ -376,6 +533,29 @@ bool UBattleCoordinator::ExecuteEnemyTurn()
 	}
 
 	return ResolveTurnEnd(ECompletedAction::Enemy);
+}
+
+void UBattleCoordinator::SetDefenseResult(const EBattleDefenseResult Result)
+{
+	if (LastDefenseResult == Result)
+	{
+		return;
+	}
+
+	LastDefenseResult = Result;
+	DefenseResultChanged.Broadcast(Result);
+	DefenseResultChangedBlueprint.Broadcast(Result);
+}
+
+void UBattleCoordinator::ClearBattleTimers()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(EnemyTelegraphTimerHandle);
+		World->GetTimerManager().ClearTimer(DefenseWindowTimerHandle);
+	}
+	EnemyTelegraphTimerHandle.Invalidate();
+	DefenseWindowTimerHandle.Invalidate();
 }
 
 bool UBattleCoordinator::ResolveTurnEnd(const ECompletedAction CompletedAction)
@@ -416,7 +596,7 @@ bool UBattleCoordinator::ResolveTurnEnd(const ECompletedAction CompletedAction)
 			return false;
 		}
 
-		return ExecuteEnemyTurn();
+		return StartEnemyTelegraph();
 	}
 
 	return TryTransitionTo(EBattleState::PlayerCommand);
@@ -447,6 +627,7 @@ bool UBattleCoordinator::ReturnToExploration()
 
 void UBattleCoordinator::ClearBattleContext()
 {
+	ClearBattleTimers();
 	ActiveEncounterSource.Reset();
 	ActivePlayerPawn.Reset();
 	ActiveEnemyActor.Reset();

@@ -4,7 +4,7 @@
 
 `ExpeditionPortfolio`는 신입 Unreal Engine 클라이언트 개발자 포트폴리오를 목적으로 하는 싱글 플레이 3인칭 RPG 프로젝트다. 《Clair Obscur: Expedition 33》의 턴제 명령 전투와 실시간 방어가 결합된 감각을 참고하되, 제한된 Vertical Slice 안에서 전투 상태 관리, 입력 처리, 데이터 주도 설계, UI 연동과 디버깅 역량을 명확히 보여주는 것을 목표로 한다.
 
-현재 기준선은 Unreal Engine 5.8 Third Person C++ 템플릿이다. 기본 탐험 맵과 템플릿 변형 콘텐츠가 존재하지만, 아래 전투 루프와 전투 도메인 구조는 아직 구현되지 않았다.
+현재 기준선은 Unreal Engine 5.8 Third Person C++ 템플릿이다. 기본 탐험 맵과 템플릿 변형 콘텐츠 위에 최소 조우, 전투 State Machine, HP/피해, 플레이어 명령, HUD 연결 지점과 실시간 패링/회피 판정의 C++ 기반이 구현돼 있다. Data Asset 기반 패턴과 전투 연출은 이후 마일스톤에서 확장한다.
 
 ## 핵심 게임 루프
 

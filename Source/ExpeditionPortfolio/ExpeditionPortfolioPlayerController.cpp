@@ -25,6 +25,7 @@ void AExpeditionPortfolioPlayerController::BeginPlay()
 			const EBattleState CurrentState = Coordinator->GetCurrentState();
 			SetExplorationInputEnabled(CurrentState == EBattleState::Exploration);
 			SetPlayerCommandInputEnabled(CurrentState == EBattleState::PlayerCommand);
+			SetDefenseInputEnabled(CurrentState == EBattleState::DefenseWindow);
 			SetBattleInteractionEnabled(CurrentState != EBattleState::Exploration);
 		}
 
@@ -101,6 +102,22 @@ void AExpeditionPortfolioPlayerController::SetupInputComponent()
 				this,
 				&ThisClass::HandlePowerStrikeInput);
 		}
+		if (ParryInputAction != nullptr)
+		{
+			EnhancedInputComponent->BindAction(
+				ParryInputAction,
+				ETriggerEvent::Started,
+				this,
+				&ThisClass::HandleParryInput);
+		}
+		if (DodgeInputAction != nullptr)
+		{
+			EnhancedInputComponent->BindAction(
+				DodgeInputAction,
+				ETriggerEvent::Started,
+				this,
+				&ThisClass::HandleDodgeInput);
+		}
 	}
 
 	bExplorationInputEnabled = false;
@@ -113,6 +130,7 @@ void AExpeditionPortfolioPlayerController::SetupInputComponent()
 			SetExplorationInputEnabled(false);
 		}
 		SetPlayerCommandInputEnabled(Coordinator->GetCurrentState() == EBattleState::PlayerCommand);
+		SetDefenseInputEnabled(Coordinator->GetCurrentState() == EBattleState::DefenseWindow);
 	}
 }
 
@@ -123,6 +141,7 @@ void AExpeditionPortfolioPlayerController::HandleBattleStateChanged(
 	(void)PreviousState;
 	SetExplorationInputEnabled(NewState == EBattleState::Exploration);
 	SetPlayerCommandInputEnabled(NewState == EBattleState::PlayerCommand);
+	SetDefenseInputEnabled(NewState == EBattleState::DefenseWindow);
 	SetBattleInteractionEnabled(NewState != EBattleState::Exploration);
 }
 
@@ -139,6 +158,22 @@ void AExpeditionPortfolioPlayerController::HandlePowerStrikeInput()
 	if (UBattleCoordinator* Coordinator = GetWorld()->GetSubsystem<UBattleCoordinator>())
 	{
 		Coordinator->RequestPlayerCommand(EBattlePlayerCommand::PowerStrike);
+	}
+}
+
+void AExpeditionPortfolioPlayerController::HandleParryInput()
+{
+	if (UBattleCoordinator* Coordinator = GetWorld()->GetSubsystem<UBattleCoordinator>())
+	{
+		Coordinator->RequestDefenseCommand(EBattleDefenseCommand::Parry);
+	}
+}
+
+void AExpeditionPortfolioPlayerController::HandleDodgeInput()
+{
+	if (UBattleCoordinator* Coordinator = GetWorld()->GetSubsystem<UBattleCoordinator>())
+	{
+		Coordinator->RequestDefenseCommand(EBattleDefenseCommand::Dodge);
 	}
 }
 
@@ -221,6 +256,34 @@ void AExpeditionPortfolioPlayerController::SetPlayerCommandInputEnabled(const bo
 		}
 	}
 	bPlayerCommandInputEnabled = bEnabled;
+}
+
+void AExpeditionPortfolioPlayerController::SetDefenseInputEnabled(const bool bEnabled)
+{
+	if (!IsLocalPlayerController() || bDefenseInputEnabled == bEnabled)
+	{
+		return;
+	}
+
+	UEnhancedInputLocalPlayerSubsystem* Subsystem =
+		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer());
+	if (Subsystem == nullptr)
+	{
+		return;
+	}
+
+	if (DefenseMappingContext != nullptr)
+	{
+		if (bEnabled)
+		{
+			Subsystem->AddMappingContext(DefenseMappingContext, 1);
+		}
+		else
+		{
+			Subsystem->RemoveMappingContext(DefenseMappingContext);
+		}
+	}
+	bDefenseInputEnabled = bEnabled;
 }
 
 void AExpeditionPortfolioPlayerController::SetBattleInteractionEnabled(const bool bEnabled)

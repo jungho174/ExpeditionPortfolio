@@ -19,10 +19,16 @@ void UCombatHUDWidget::NativeConstruct()
 		BattleStateChangedHandle = BattleCoordinator->OnBattleStateChanged().AddUObject(
 			this,
 			&ThisClass::HandleBattleStateChanged);
+		DefenseResultChangedHandle = BattleCoordinator->OnDefenseResultChanged().AddUObject(
+			this,
+			&ThisClass::HandleDefenseResultChanged);
 		BindActiveCombatants();
 	}
 
 	RefreshBattleView();
+	BP_OnDefenseResultUpdated(BattleCoordinator.IsValid()
+		? BattleCoordinator->GetLastDefenseResult()
+		: EBattleDefenseResult::None);
 }
 
 void UCombatHUDWidget::NativeDestruct()
@@ -33,7 +39,12 @@ void UCombatHUDWidget::NativeDestruct()
 	{
 		BattleCoordinator->OnBattleStateChanged().Remove(BattleStateChangedHandle);
 	}
+	if (BattleCoordinator.IsValid() && DefenseResultChangedHandle.IsValid())
+	{
+		BattleCoordinator->OnDefenseResultChanged().Remove(DefenseResultChangedHandle);
+	}
 	BattleStateChangedHandle.Reset();
+	DefenseResultChangedHandle.Reset();
 	BattleCoordinator.Reset();
 
 	Super::NativeDestruct();
@@ -54,6 +65,21 @@ bool UCombatHUDWidget::RequestPowerStrike()
 	return RequestPlayerCommand(EBattlePlayerCommand::PowerStrike);
 }
 
+bool UCombatHUDWidget::RequestDefenseCommand(const EBattleDefenseCommand Command)
+{
+	return BattleCoordinator.IsValid() && BattleCoordinator->RequestDefenseCommand(Command);
+}
+
+bool UCombatHUDWidget::RequestParry()
+{
+	return RequestDefenseCommand(EBattleDefenseCommand::Parry);
+}
+
+bool UCombatHUDWidget::RequestDodge()
+{
+	return RequestDefenseCommand(EBattleDefenseCommand::Dodge);
+}
+
 void UCombatHUDWidget::HandleBattleStateChanged(
 	const EBattleState PreviousState,
 	const EBattleState NewState)
@@ -62,6 +88,11 @@ void UCombatHUDWidget::HandleBattleStateChanged(
 	(void)NewState;
 	BindActiveCombatants();
 	RefreshBattleView();
+}
+
+void UCombatHUDWidget::HandleDefenseResultChanged(const EBattleDefenseResult Result)
+{
+	BP_OnDefenseResultUpdated(Result);
 }
 
 void UCombatHUDWidget::HandleCombatantHealthChanged(const float PreviousHealth, const float NewHealth)

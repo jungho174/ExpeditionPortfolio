@@ -18,7 +18,7 @@
 | `PlayerAction` | 검증된 플레이어 명령과 대상이 준비됨 | 기본적으로 없음 | 판정과 필수 Action 연출이 완료됨 | `TurnEnd` |
 | `EnemyTelegraph` | 적 턴이 시작되고 실행할 패턴이 선택됨 | 방어 준비를 위한 시점 조작 등 최소 입력만 허용 | Telegraph 시간이 끝나고 패턴 실행 준비가 완료됨 | `EnemyAction` |
 | `EnemyAction` | 선택된 적 패턴의 실행이 시작됨 | 패턴이 허용한 방어 입력만 수신하며 아직 판정하지 않을 수 있음 | 방어 가능 타격이 활성화되거나, 방어 불가 Action이 완료됨 | `DefenseWindow`, `TurnEnd` |
-| `DefenseWindow` | 회피 또는 패링 판정 구간이 열림 | 회피, 패링 | 입력 판정과 공격 결과 적용이 끝나거나 제한 시간이 만료됨 | 추가 타격이 있으면 `EnemyAction`, 아니면 `TurnEnd` |
+| `DefenseWindow` | 회피 또는 패링 판정 구간이 열림 | 회피, 패링 | 입력 판정과 공격 결과 적용이 끝나거나 제한 시간이 만료됨 | 현재 단일 타격은 `TurnEnd` (`ReturnToField`는 안전 정리 경로) |
 | `TurnEnd` | 플레이어 또는 적 Action의 결과 적용이 완료됨 | 없음 | 승패 판정과 다음 턴 결정이 완료됨 | `Victory`, `Defeat`, `PlayerCommand`, `EnemyTelegraph` |
 | `Victory` | 모든 필수 적이 전투 불능임 | 결과 확인 또는 계속 | 보상 및 전투 종료 처리가 완료됨 | `ReturnToField` |
 | `Defeat` | 플레이어가 전투 불능임 | 재시도 또는 종료 선택(정책 확정 전) | 선택한 패배 처리 정책이 확정됨 | `BattleIntro`, `ReturnToField` 또는 별도 실패 흐름(추후 확정) |
@@ -32,11 +32,15 @@
 
 각 `TurnEnd`에서 승리 또는 패배 조건이 만족되면 반복 대신 `Victory` 또는 `Defeat`로 전이한다. 승리 흐름은 `Victory -> ReturnToField -> Exploration`으로 종료한다.
 
-현재 최소 전투 루프에서는 `RequestPlayerCommand()`가 `BasicAttack` 또는 `PowerStrike`를 검증한다. `PowerStrike`는 조우마다 한 번만 사용할 수 있으며, 사용 여부는 전투 Context와 함께 초기화된다. 명령이 승인되면 플레이어와 적의 고정 Damage Action을 한 라운드 동안 동기식으로 처리한다. 적 Action은 아직 방어 입력을 허용하지 않으므로 `EnemyAction -> TurnEnd`로 종료하며, `DefenseWindow` 연결은 Milestone 3에서 추가한다.
+현재 최소 전투 루프에서는 `RequestPlayerCommand()`가 `BasicAttack` 또는 `PowerStrike`를 검증한다. `PowerStrike`는 조우마다 한 번만 사용할 수 있으며, 사용 여부는 전투 Context와 함께 초기화된다. 플레이어 Action 결과가 적을 쓰러뜨리지 못하면 `TurnEnd -> EnemyTelegraph`로 전환하고 1초 Timer를 시작한다. Timer가 끝나면 `EnemyAction -> DefenseWindow`로 전환하며 0.6초 방어 Timer를 시작한다.
+
+`DefenseWindow` 시작 후 0.2초 이내의 패링은 `ParrySuccess`로 판정해 적에게 15 반격 Damage를 주고 플레이어 피해를 막는다. 활성 구간 안의 회피는 `DodgeSuccess`로 판정해 피해를 막는다. 0.2초를 넘긴 패링은 `Failed`, 0.6초 동안 입력하지 않으면 `NoInput`으로 판정하며 둘 다 플레이어에게 20 Damage를 준다. 판정 후 `TurnEnd`에서 승패를 다시 확인하므로 패링 반격으로도 승리할 수 있고, 미입력 피격으로도 패배할 수 있다.
+
+`RequestDefenseCommand()`는 `DefenseWindow`와 활성 Timer가 모두 유효할 때만 패링 또는 회피를 받는다. 첫 판정이 Timer를 취소하고 Action 진행 Guard를 잡으므로 결과 Event에서 들어온 중복 또는 재진입 방어 입력은 거부된다. 참가자가 Telegraph나 DefenseWindow 도중 무효화되면 남은 Timer를 정리하고 `ReturnToField -> Exploration`으로 안전하게 복귀한다.
 
 상태 변경 Event 방송 중에는 새로운 전이와 명령을 거부한다. 따라서 Event 소비자는 상태를 관찰할 수 있지만 같은 호출 스택에서 전투 흐름을 다시 진행시킬 수 없다.
 
-탐험 Mapping Context는 전투 전체에서 비활성화되고, 전투 명령 Mapping Context는 `PlayerCommand`에서만 활성화된다. UI Button과 Enhanced Input Action은 상태를 직접 변경하지 않고 동일한 명령 API를 호출한다.
+탐험 Mapping Context는 전투 전체에서 비활성화되고, 전투 명령 Mapping Context는 `PlayerCommand`에서만, 방어 Mapping Context는 `DefenseWindow`에서만 활성화된다. UI Button과 Enhanced Input Action은 상태를 직접 변경하지 않고 동일한 명령 API를 호출한다.
 
 ## 구현 시 검증할 예외
 
