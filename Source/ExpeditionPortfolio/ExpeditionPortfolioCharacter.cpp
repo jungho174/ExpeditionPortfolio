@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ExpeditionPortfolioCharacter.h"
+#include "UI/ItemPresentationComponent.h"
+#include "UI/DefensePresentationComponent.h"
 #include "Engine/LocalPlayer.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -14,6 +16,8 @@
 
 AExpeditionPortfolioCharacter::AExpeditionPortfolioCharacter()
 {
+	ItemPresentation = CreateDefaultSubobject<UItemPresentationComponent>(TEXT("ItemPresentation"));
+	DefensePresentation = CreateDefaultSubobject<UDefensePresentationComponent>(TEXT("DefensePresentation"));
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 		

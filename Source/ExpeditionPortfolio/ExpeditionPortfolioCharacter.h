@@ -10,6 +10,8 @@
 class USpringArmComponent;
 class UCameraComponent;
 class UInputAction;
+class UItemPresentationComponent;
+class UDefensePresentationComponent;
 struct FInputActionValue;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
@@ -32,6 +34,10 @@ class AExpeditionPortfolioCharacter : public ACharacter
 	UCameraComponent* FollowCamera;
 	
 protected:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
+	TObjectPtr<UItemPresentationComponent> ItemPresentation;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
+	TObjectPtr<UDefensePresentationComponent> DefensePresentation;
 
 	/** Jump Input Action */
 	UPROPERTY(EditAnywhere, Category="Input")
