@@ -4,12 +4,19 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "InputCoreTypes.h"
 #include "ExpeditionPortfolioPlayerController.generated.h"
 
 class UInputMappingContext;
 class UInputAction;
 class UUserWidget;
 class UCombatHUDWidget;
+class UAttackTimingWidget;
+class UBattlePresentationComponent;
+class UQTEPresentationComponent;
+class UBattleResultPresentationComponent;
+class UCombatNumberData;
+class UCombatNumberWidget;
 enum class EBattleState : uint8;
 
 /**
@@ -20,8 +27,28 @@ UCLASS(abstract)
 class AExpeditionPortfolioPlayerController : public APlayerController
 {
 	GENERATED_BODY()
+	public:
+	AExpeditionPortfolioPlayerController();
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Combat|UI") TObjectPtr<UCombatNumberData> CombatNumberData;
+	UPROPERTY(VisibleAnywhere,BlueprintReadOnly,Category="Combat|Result") TObjectPtr<UBattleResultPresentationComponent> BattleResultPresentation;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat|QTE") TObjectPtr<UQTEPresentationComponent> QTEPresentation;
+	FText GetTargetInputHint() const;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat|Camera") TObjectPtr<UBattlePresentationComponent> BattlePresentation;
 	
 protected:
+	UPROPERTY(Transient) TObjectPtr<UCombatNumberWidget> CombatNumberWidget;
+	UPROPERTY(EditAnywhere, Category="Input|Combat|Target Selection") FKey TargetConfirmKey = EKeys::SpaceBar;
+	UPROPERTY(EditAnywhere, Category="Input|Combat|Target Selection") FKey TargetPreviousKey = EKeys::A;
+	UPROPERTY(EditAnywhere, Category="Input|Combat|Target Selection") FKey TargetNextKey = EKeys::D;
+	void HandleTargetSelectionChanged();
+	void HandleTargetConfirm();
+	void HandleTargetPrevious();
+	void HandleTargetNext();
+	FDelegateHandle TargetSelectionHandle;
+	UPROPERTY(EditAnywhere, Category="Input|Combat") FKey AttackTimingKey = EKeys::SpaceBar;
+	UPROPERTY(EditAnywhere, Category="Combat|UI") TSubclassOf<UAttackTimingWidget> AttackTimingWidgetClass;
+	UPROPERTY(Transient) TObjectPtr<UAttackTimingWidget> AttackTimingWidget;
+	void HandleAttackTimingInput();
 
 	/** Input Mapping Contexts */
 	UPROPERTY(EditAnywhere, Category ="Input|Input Mappings")
@@ -78,6 +105,11 @@ protected:
 
 	void HandleBattleStateChanged(EBattleState PreviousState, EBattleState NewState);
 	void HandleBasicAttackInput();
+	void HandleThirdMenuInput();
+	void HandleMenuPreviousInput();
+	void HandleMenuNextInput();
+	void HandleMenuConfirmInput();
+	void HandleMenuBackInput();
 	void HandlePowerStrikeInput();
 	void HandleParryInput();
 	void HandleDodgeInput();

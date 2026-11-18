@@ -12,7 +12,40 @@
 #include "Blueprint/UserWidget.h"
 #include "ExpeditionPortfolio.h"
 #include "UI/CombatHUDWidget.h"
+#include "UI/CombatNumberWidget.h"
+#include "UI/AttackTimingWidget.h"
+#include "UI/BattlePresentationComponent.h"
+#include "UI/QTEPresentationComponent.h"
+#include "UI/BattleResultPresentationComponent.h"
+#include "Combat/ActionQTESubsystem.h"
 #include "Widgets/Input/SVirtualJoystick.h"
+
+AExpeditionPortfolioPlayerController::AExpeditionPortfolioPlayerController()
+{
+	BattlePresentation = CreateDefaultSubobject<UBattlePresentationComponent>(TEXT("BattlePresentation"));
+	QTEPresentation = CreateDefaultSubobject<UQTEPresentationComponent>(TEXT("QTEPresentation"));
+	BattleResultPresentation = CreateDefaultSubobject<UBattleResultPresentationComponent>(TEXT("BattleResultPresentation"));
+}
+
+void AExpeditionPortfolioPlayerController::HandleAttackTimingInput()
+{
+	if (auto* Battle=GetWorld()->GetSubsystem<UBattleCoordinator>())
+	{
+		if (TargetConfirmKey==AttackTimingKey && Battle->IsSelectingTarget()) { Battle->ConfirmTargetSelection(); return; }
+		if (Battle->IsConfirmingTarget()) { return; }
+		if (AttackTimingKey==EKeys::SpaceBar && Battle->GetCurrentState()==EBattleState::PlayerCommand)
+		{
+			HandleMenuConfirmInput(); return;
+		}
+	}
+	if (auto* QTE = GetWorld()->GetSubsystem<UActionQTESubsystem>())
+	{
+		const int64 Session = QTE->GetView().SessionId;
+		auto* Battle = GetWorld()->GetSubsystem<UBattleCoordinator>();
+		if (Session && Battle && Battle->GetAttackTimingView().SessionId == Session) { Battle->RequestAttackTimingInput(); }
+		else { QTE->SubmitInput(Session); }
+	}
+}
 
 void AExpeditionPortfolioPlayerController::BeginPlay()
 {
@@ -22,11 +55,12 @@ void AExpeditionPortfolioPlayerController::BeginPlay()
 		if (UBattleCoordinator* Coordinator = GetWorld()->GetSubsystem<UBattleCoordinator>())
 		{
 			BattleStateChangedHandle = Coordinator->OnBattleStateChanged().AddUObject(this, &ThisClass::HandleBattleStateChanged);
+			TargetSelectionHandle = Coordinator->OnTargetSelectionChanged().AddUObject(this, &ThisClass::HandleTargetSelectionChanged);
 			const EBattleState CurrentState = Coordinator->GetCurrentState();
 			SetExplorationInputEnabled(CurrentState == EBattleState::Exploration);
 			SetPlayerCommandInputEnabled(CurrentState == EBattleState::PlayerCommand);
 			SetDefenseInputEnabled(CurrentState == EBattleState::DefenseWindow);
-			SetBattleInteractionEnabled(CurrentState != EBattleState::Exploration);
+			SetBattleInteractionEnabled(CurrentState == EBattleState::PlayerCommand);
 		}
 
 		if (CombatHUDWidgetClass != nullptr)
@@ -36,6 +70,21 @@ void AExpeditionPortfolioPlayerController::BeginPlay()
 			{
 				CombatHUDWidget->AddToPlayerScreen(10);
 			}
+		}
+		AttackTimingWidget = CreateWidget<UAttackTimingWidget>(this, AttackTimingWidgetClass ? AttackTimingWidgetClass.Get() : UAttackTimingWidget::StaticClass());
+		CombatNumberWidget=CreateWidget<UCombatNumberWidget>(this,UCombatNumberWidget::StaticClass());
+		if (CombatNumberWidget)
+		{
+			CombatNumberWidget->PresentationData=CombatNumberData;
+			CombatNumberWidget->AddToPlayerScreen(30);
+		}
+		if (AttackTimingWidget)
+		{
+			AttackTimingWidget->InputLabel = AttackTimingKey == EKeys::SpaceBar ? FText::FromString(TEXT("SPACE")) : AttackTimingKey.GetDisplayName();
+			AttackTimingWidget->AddToPlayerScreen(20);
+			AttackTimingWidget->SetDesiredSizeInViewport(FVector2D(260,260));
+			AttackTimingWidget->SetAnchorsInViewport(FAnchors(0.5f,0.7f));
+			AttackTimingWidget->SetAlignmentInViewport(FVector2D(0.5f,0.5f));
 		}
 	}
 
@@ -63,6 +112,9 @@ void AExpeditionPortfolioPlayerController::BeginPlay()
 
 void AExpeditionPortfolioPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (CombatNumberWidget) { CombatNumberWidget->RemoveFromParent(); CombatNumberWidget=nullptr; }
+	if (auto* Battle = GetWorld()->GetSubsystem<UBattleCoordinator>()) { Battle->OnTargetSelectionChanged().Remove(TargetSelectionHandle); }
+	if (AttackTimingWidget) { AttackTimingWidget->RemoveFromParent(); AttackTimingWidget = nullptr; }
 	if (CombatHUDWidget != nullptr)
 	{
 		CombatHUDWidget->RemoveFromParent();
@@ -84,6 +136,20 @@ void AExpeditionPortfolioPlayerController::EndPlay(const EEndPlayReason::Type En
 void AExpeditionPortfolioPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
+	InputComponent->BindKey(AttackTimingKey, IE_Pressed, this, &ThisClass::HandleAttackTimingInput);
+	// Do not consume exploration W/S on the controller's higher-priority input component.
+	InputComponent->BindKey(EKeys::W,IE_Pressed,this,&ThisClass::HandleMenuPreviousInput).bConsumeInput=false;
+	InputComponent->BindKey(EKeys::S,IE_Pressed,this,&ThisClass::HandleMenuNextInput).bConsumeInput=false;
+	if (AttackTimingKey!=EKeys::SpaceBar && TargetConfirmKey!=EKeys::SpaceBar)
+	{
+		InputComponent->BindKey(EKeys::SpaceBar,IE_Pressed,this,&ThisClass::HandleMenuConfirmInput).bConsumeInput=false;
+	}
+	InputComponent->BindKey(EKeys::Three, IE_Pressed, this, &ThisClass::HandleThirdMenuInput);
+	InputComponent->BindKey(EKeys::BackSpace, IE_Pressed, this, &ThisClass::HandleMenuBackInput);
+	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &ThisClass::HandleMenuBackInput);
+	if (TargetConfirmKey!=AttackTimingKey) { InputComponent->BindKey(TargetConfirmKey, IE_Pressed, this, &ThisClass::HandleTargetConfirm); }
+	InputComponent->BindKey(TargetPreviousKey, IE_Pressed, this, &ThisClass::HandleTargetPrevious);
+	InputComponent->BindKey(TargetNextKey, IE_Pressed, this, &ThisClass::HandleTargetNext);
 	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent))
 	{
 		if (BasicAttackInputAction != nullptr)
@@ -142,23 +208,71 @@ void AExpeditionPortfolioPlayerController::HandleBattleStateChanged(
 	SetExplorationInputEnabled(NewState == EBattleState::Exploration);
 	SetPlayerCommandInputEnabled(NewState == EBattleState::PlayerCommand);
 	SetDefenseInputEnabled(NewState == EBattleState::DefenseWindow);
-	SetBattleInteractionEnabled(NewState != EBattleState::Exploration);
+	SetBattleInteractionEnabled(NewState == EBattleState::PlayerCommand);
+	const bool bResult=NewState==EBattleState::Victory || NewState==EBattleState::Defeat;
+	if (bResult && AttackTimingWidget) { AttackTimingWidget->SetVisibility(ESlateVisibility::Collapsed); }
 }
 
 void AExpeditionPortfolioPlayerController::HandleBasicAttackInput()
 {
-	if (UBattleCoordinator* Coordinator = GetWorld()->GetSubsystem<UBattleCoordinator>())
-	{
-		Coordinator->RequestPlayerCommand(EBattlePlayerCommand::BasicAttack);
-	}
+	if (CombatHUDWidget) { CombatHUDWidget->SelectMenuEntry(1); }
 }
 
 void AExpeditionPortfolioPlayerController::HandlePowerStrikeInput()
 {
-	if (UBattleCoordinator* Coordinator = GetWorld()->GetSubsystem<UBattleCoordinator>())
+	if (CombatHUDWidget) { CombatHUDWidget->SelectMenuEntry(2); }
+}
+
+void AExpeditionPortfolioPlayerController::HandleThirdMenuInput()
+{
+	if (CombatHUDWidget) { CombatHUDWidget->SelectMenuEntry(3); }
+}
+
+void AExpeditionPortfolioPlayerController::HandleMenuPreviousInput()
+{
+	if (CombatHUDWidget) { CombatHUDWidget->MoveMenuSelection(-1); }
+}
+void AExpeditionPortfolioPlayerController::HandleMenuNextInput()
+{
+	if (CombatHUDWidget) { CombatHUDWidget->MoveMenuSelection(1); }
+}
+void AExpeditionPortfolioPlayerController::HandleMenuConfirmInput()
+{
+	if (CombatHUDWidget) { CombatHUDWidget->ConfirmMenuSelection(); }
+}
+
+void AExpeditionPortfolioPlayerController::HandleMenuBackInput()
+{
+	if (CombatHUDWidget) { CombatHUDWidget->BackToMainMenu(); }
+}
+
+FText AExpeditionPortfolioPlayerController::GetTargetInputHint() const
+{
+	return FText::Format(FText::FromString(TEXT("{0} / {1}  대상 변경     {2}  확정     Backspace  취소")),
+		TargetPreviousKey.GetDisplayName(), TargetNextKey.GetDisplayName(), TargetConfirmKey.GetDisplayName());
+}
+void AExpeditionPortfolioPlayerController::HandleTargetSelectionChanged()
+{
+	if (auto* Battle = GetWorld()->GetSubsystem<UBattleCoordinator>())
 	{
-		Coordinator->RequestPlayerCommand(EBattlePlayerCommand::PowerStrike);
+		SetBattleInteractionEnabled(Battle->GetCurrentState() == EBattleState::PlayerCommand && !Battle->IsSelectingTarget() && !Battle->IsConfirmingTarget());
 	}
+}
+void AExpeditionPortfolioPlayerController::HandleTargetConfirm()
+{
+	if (auto* Battle = GetWorld()->GetSubsystem<UBattleCoordinator>())
+	{
+		if (TargetConfirmKey==EKeys::SpaceBar && !Battle->IsSelectingTarget()) { HandleMenuConfirmInput(); return; }
+		Battle->ConfirmTargetSelection();
+	}
+}
+void AExpeditionPortfolioPlayerController::HandleTargetPrevious()
+{
+	if (auto* Battle = GetWorld()->GetSubsystem<UBattleCoordinator>()) { Battle->MoveTargetSelection(-1); }
+}
+void AExpeditionPortfolioPlayerController::HandleTargetNext()
+{
+	if (auto* Battle = GetWorld()->GetSubsystem<UBattleCoordinator>()) { Battle->MoveTargetSelection(1); }
 }
 
 void AExpeditionPortfolioPlayerController::HandleParryInput()
@@ -302,7 +416,9 @@ void AExpeditionPortfolioPlayerController::SetBattleInteractionEnabled(const boo
 	}
 	else
 	{
-		SetInputMode(FInputModeGameOnly());
+		FInputModeGameOnly InputMode;
+		InputMode.SetConsumeCaptureMouseDown(false);
+		SetInputMode(InputMode);
 	}
 	bBattleInteractionEnabled = bEnabled;
 }

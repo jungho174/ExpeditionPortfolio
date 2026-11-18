@@ -144,4 +144,30 @@ bool FCombatantComponentDelegateNotificationsTest::RunTest(const FString& Parame
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCombatantHealingTest,
+	"ExpeditionPortfolio.Combat.CombatantComponent.Healing",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCombatantHealingTest::RunTest(const FString& Parameters)
+{
+	auto* HP = CreateCombatantComponent();
+	TestFalse(TEXT("Full health cannot heal"), HP->RestoreHealth(10));
+	HP->ApplyDamage(60);
+	int32 Changes = 0;
+	HP->OnHealthChanged().AddLambda([&](float Before, float After) { ++Changes; });
+	TestFalse(TEXT("Zero healing rejected"), HP->RestoreHealth(0));
+	TestFalse(TEXT("Negative healing rejected"), HP->RestoreHealth(-1));
+	TestFalse(TEXT("NaN healing rejected"), HP->RestoreHealth(std::numeric_limits<float>::quiet_NaN()));
+	TestFalse(TEXT("Infinite healing rejected"), HP->RestoreHealth(std::numeric_limits<float>::infinity()));
+	TestEqual(TEXT("Rejected values have no side effects"), Changes, 0);
+	TestTrue(TEXT("Valid healing applied"), HP->RestoreHealth(30));
+	TestEqual(TEXT("HP increased"), HP->GetCurrentHealth(), 70.0f);
+	TestTrue(TEXT("Overheal clamped"), HP->RestoreHealth(60));
+	TestEqual(TEXT("Maximum respected"), HP->GetCurrentHealth(), 100.0f);
+	TestEqual(TEXT("Exactly one event for each heal"), Changes, 2);
+	HP->ApplyDamage(100);
+	TestFalse(TEXT("Healing does not revive defeated combatant"), HP->RestoreHealth(30));
+	TestEqual(TEXT("Remains defeated"), HP->GetCurrentHealth(), 0.0f);
+	return true;
+}
 #endif
