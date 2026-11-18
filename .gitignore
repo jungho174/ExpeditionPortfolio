@@ -4,6 +4,43 @@ DerivedDataCache/
 Intermediate/
 Saved/
 
+# Locally installed third-party asset packs (do not redistribute in the repository)
+/Content/Abandoned_Cathedral/
+/Content/AncientTempleRuins/
+/Content/Atlantis_Ruins/
+/Content/Chaotic_Skies/
+/Content/CombatMagicAnims/
+/Content/Dark_Knight/
+/Content/DragonCave/
+/Content/FuturisticWarrior/
+/Content/Lizardman_Berserker/
+/Content/Mixed_Magic_VFX_Pack/
+/Content/ParagonPhase/
+/Content/Polyphoria/
+/Content/SlashTrail_SoftTofu/
+/Content/Stone_Golem/
+/Content/WhiteCastle/
+/Content/ExpeditionPortfolio/Environment/WhiteCastle/PrivateGeometry/
+/Content/ExpeditionPortfolio/Rendering/PrivateVFX/
+/Content/ExpeditionPortfolio/Rendering/Enemies/StoneGolem/M_StoneGolemDeathFade.uasset
+/Content/ExpeditionPortfolio/Rendering/Enemies/StoneGolem/MI_StoneGolemDeathFade.uasset
+
+# World Partition actors belonging to the excluded AncientTempleRuins map
+/Content/__ExternalActors__/AncientTempleRuins/
+
+# Imported third-party audio and its optional source files
+/Content/ExpeditionPortfolio/Audio/
+/SourceArt/Audio/ThirdParty/
+
+# Third-party media copied into project-owned presentation folders
+/Content/ExpeditionPortfolio/Animation/Magic/AS_LevitatingFireballCharge.uasset
+/Content/ExpeditionPortfolio/Animation/Magic/AS_LevitatingMagicAttack.uasset
+/Content/ExpeditionPortfolio/Animation/Magic/AS_SpellAttack.uasset
+/Content/ExpeditionPortfolio/Animation/Magic/VFX/
+/Content/ExpeditionPortfolio/Animation/Enemy/AS_Spell_Cast_Attack.uasset
+/Content/ExpeditionPortfolio/Animation/Defense/AS_MagicDefend.uasset
+/Content/ExpeditionPortfolio/Animation/Defense/NS_ParryImpact.uasset
+
 # Visual Studio generated files
 .vs/
 *.sln
