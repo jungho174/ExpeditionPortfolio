@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
 #include "ExpeditionPortfolioGameMode.generated.h"
+class UBattleRulesData;
 
 /**
  *  Simple GameMode for a third person game
@@ -15,6 +16,7 @@ class AExpeditionPortfolioGameMode : public AGameModeBase
 	GENERATED_BODY()
 
 public:
+	UPROPERTY(EditDefaultsOnly,BlueprintReadOnly,Category="Combat|Rules") TObjectPtr<UBattleRulesData> BattleRules;
 	
 	/** Constructor */
 	AExpeditionPortfolioGameMode();

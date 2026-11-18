@@ -18,10 +18,15 @@ public class ExpeditionPortfolio : ModuleRules
 			"StateTreeModule",
 			"GameplayStateTreeModule",
 			"UMG",
-			"Slate"
+			"Slate",
+			"Niagara"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { });
+		PrivateDependencyModuleNames.AddRange(new string[] { "SlateCore" });
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "UMGEditor", "NiagaraEditor", "AnimGraph", "BlueprintGraph", "AnimGraphRuntime", "MaterialEditor" });
+		}
 
 		PublicIncludePaths.AddRange(new string[] {
 			"ExpeditionPortfolio",

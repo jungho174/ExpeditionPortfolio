@@ -9,5 +9,9 @@ UENUM(BlueprintType)
 enum class EBattlePlayerCommand : uint8
 {
 	BasicAttack,
-	PowerStrike
+	PowerStrike,
+	MeleeAttack,
+	UsePotion,
+	CharacterAction,
+	UseItem
 };
