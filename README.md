@@ -11,7 +11,7 @@ Unreal Engine 5.8과 C++로 구현한 개인 프로젝트입니다. 턴제로 �
 | [전투 명령 메뉴](Source/ExpeditionPortfolio/UI/CombatHUDWidget.cpp) | HUD가 메뉴와 선택 항목을 관리하고, 대상 확정과 행동 승인 요청을 전투 코디네이터에 전달합니다. |
 | [공격 QTE와 적의 다단 공격](Source/ExpeditionPortfolio/Combat/ActionQTESubsystem.cpp) | 공격 QTE의 단계별 입력과 피해 배율을 계산합니다. [적 공격 패턴](Source/ExpeditionPortfolio/Combat/EnemyAttackPatternData.cpp)은 애니메이션의 타격 번호와 방어 가능 시간을 연결합니다. |
 | [마법과 광역 공격](Source/ExpeditionPortfolio/UI/MagicPresentationComponent.cpp) | 발사체의 발사·도착 시점을 구분하고, [광역 공격 테스트](Source/ExpeditionPortfolio/Tests/AreaActionTests.cpp)로 여러 적의 피해 반영 순서와 중복 명중 방지를 검사합니다. |
-| [결과 처리와 재도전](Source/ExpeditionPortfolio/Tests/BattleCoordinatorTests.cpp) | 전투 종료 시점의 결과 통계, 재도전 시 진입 HP·행동 자원 복원, 안전한 후퇴 위치가 없는 경우를 검사합니다. |
+| [결과 처리와 재도전](Source/ExpeditionPortfolio/Combat/BattleCoordinatorResult.cpp) | [결과 처리 테스트](Source/ExpeditionPortfolio/Tests/BattleResultTests.cpp)에서 전투 종료 시점의 통계, 재도전 시 진입 HP·행동 자원 복원, 안전한 후퇴 위치가 없는 경우를 검사합니다. |
 
 [전체 C++ 소스](Source/ExpeditionPortfolio) · [자동화 테스트](Source/ExpeditionPortfolio/Tests) · [Unreal 프로젝트 설정](Config)
 
