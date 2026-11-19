@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Combat/BattleDefense.h"
 #include "Combat/BattlePlayerCommand.h"
+#include "Combat/BattlePlayerActionSession.h"
 #include "Combat/BattleState.h"
 #include "Combat/AttackTiming.h"
 #include "Combat/BattleFacing.h"
@@ -69,7 +70,7 @@ public:
 	UFUNCTION(BlueprintPure,Category="Combat|Items") bool CanUseItem(UCombatItemData* Item) const;
 	UFUNCTION(BlueprintCallable,Category="Combat|Items") bool BeginItemSelection(UCombatItemData* Item);
 	static bool IsItemCommand(EBattlePlayerCommand Command) { return Command==EBattlePlayerCommand::UseItem || Command==EBattlePlayerCommand::UsePotion; }
-	UFUNCTION(BlueprintPure,Category="Combat|Character") UCharacterActionData* GetActiveCharacterAction() const { return ActiveAction; }
+	UFUNCTION(BlueprintPure,Category="Combat|Character") UCharacterActionData* GetActiveCharacterAction() const { return PlayerAction.Action; }
  UFUNCTION(BlueprintPure,Category="Combat|Character") UCharacterCombatData* GetCharacterActions() const;
  UFUNCTION(BlueprintPure,Category="Combat|Character") bool CanRequestAction(UCharacterActionData* Action) const;
  UFUNCTION(BlueprintPure,Category="Combat|Character") int32 GetRemainingActionUses(UCharacterActionData* Action) const;
@@ -101,9 +102,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="Combat|Target") bool IsSelectingAllEnemies() const;
 	UFUNCTION(BlueprintPure, Category="Combat|Target") TArray<AActor*> GetSelectedTargets() const;
 	UFUNCTION(BlueprintPure, Category="Combat|Target") UCharacterActionData* GetTargetSelectionAction() const;
-	// Accepted targets stay available after damage for presentation; HP logic skips defeated targets.
+	// 타격 뒤에도 확정된 대상을 연출에 제공하고, 피해 계산에서는 쓰러진 적을 건너뛴다.
 	UFUNCTION(BlueprintPure, Category="Combat|Target") TArray<AActor*> GetActiveActionTargets() const;
-	UFUNCTION(BlueprintPure, Category="Combat|Target") bool IsActiveActionAreaAttack() const { return ActiveTargetScope==ECharacterActionTargetScope::AllEnemies; }
+	UFUNCTION(BlueprintPure, Category="Combat|Target") bool IsActiveActionAreaAttack() const { return PlayerAction.TargetScope==ECharacterActionTargetScope::AllEnemies; }
 	UFUNCTION(BlueprintPure, Category="Combat|Target") int32 GetTargetCount() const { return Targets.Candidates.Num(); }
 	FSimpleMulticastDelegate& OnTargetSelectionChanged() { return TargetSelectionChanged; }
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
@@ -134,9 +135,10 @@ public:
 	float GetMagicDamage(EBattlePlayerCommand Command) const;
 	UFUNCTION(BlueprintCallable, Category="Combat|Timing") bool RequestAttackTimingInput();
 	UFUNCTION(BlueprintPure, Category="Combat|Timing") FAttackTimingView GetAttackTimingView() const;
-	UFUNCTION(BlueprintPure, Category="Combat|Presentation") EPlayerActionPhase GetPlayerActionPhase() const { return PlayerActionPhase; }
+	UFUNCTION(BlueprintPure, Category="Combat|Presentation") EPlayerActionPhase GetPlayerActionPhase() const { return PlayerAction.Phase; }
 	FOnPlayerPhaseChanged& OnPlayerPhaseChanged() { return PlayerPhaseChanged; }
 	FSimpleMulticastDelegate& OnAttackTimingChanged() { return AttackTimingChanged; }
+	// 행동과 QTE의 ID를 연결해 준비 단계에서만 입력을 받는다.
 	void BeginPlayerPreparation(int64 ActionId, float Duration, float SuccessDuration, float Multiplier, bool bTimingEnabled, const UActionQTEPatternData* Pattern = nullptr);
 	void NotifyPlayerPreparationFinished(int64 ActionId);
 	void NotifyBattleIntroFinished(int64 BattleId);
@@ -171,7 +173,7 @@ public:
 	UFUNCTION(BlueprintPure, Category="Combat|Turn") AActor* GetActingCombatant() const;
 	UFUNCTION(BlueprintPure, Category="Combat|Turn") int32 GetBattleRound() const { return BattleRound; }
 
-	// Only the matching, active action may report a hit or completion.
+	// 현재 행동 ID와 일치하는 통지만 받아 피해의 중복 적용을 막는다.
 	bool NotifyPlayerActionHit(int64 ActionId);
 	bool NotifyPlayerActionFinished(int64 ActionId, bool bInterrupted);
 	UFUNCTION(BlueprintCallable, Category="Combat|Counter") bool NotifyCounterHit(int64 ActionId) { return NotifyParryCounterHit(ActionId); }
@@ -221,9 +223,7 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UBattleRulesData> ConfiguredRules;
 	UPROPERTY(Transient) TObjectPtr<UBattleRulesData> ActiveRules;
 	UPROPERTY(Transient) TObjectPtr<UCombatItemData> PendingItem;
-	UPROPERTY(Transient) TObjectPtr<UCombatItemData> ActiveItem;
 	TMap<FName,int32> ItemStocks,EntryItemStocks;
-	TWeakObjectPtr<UItemPresentationComponent> ItemPresentation;
 	UCombatItemData* GetDefaultItem() const;
 	bool ValidateCharacterSetup(APawn* Player) const;
 	bool IsContentFreeTest() const;
@@ -233,9 +233,7 @@ private:
  void StopCounterPresentation();
  bool BeginCharacterCounter();
  UPROPERTY(Transient) TObjectPtr<UCharacterActionData> PendingAction;
- UPROPERTY(Transient) TObjectPtr<UCharacterActionData> ActiveAction;
  UPROPERTY(Transient) TObjectPtr<UCharacterActionData> ActiveCounterAction;
- TWeakObjectPtr<UActorComponent> ActionPresentation;
  TMap<TWeakObjectPtr<AActor>,TMap<FName,int32>> ActionUses;
  TMap<TWeakObjectPtr<AActor>,TMap<FName,int32>> EntryActionUses;
 	bool ApplyCombatEffect(UCombatantComponent* Target, float Amount, ECombatNumberKind Kind);
@@ -261,8 +259,6 @@ private:
 	bool TryFinishBattle();
 	bool RestoreEncounter(bool bRetry);
 	FCombatTargetSelection Targets;
-	TArray<TWeakObjectPtr<AActor>> ActionTargets;
-	ECharacterActionTargetScope ActiveTargetScope=ECharacterActionTargetScope::SingleEnemy;
 	bool RefreshAreaPrimaryTarget();
 	TArray<TWeakObjectPtr<AActor>> BattleAllies;
 	TArray<TWeakObjectPtr<AActor>> BattleEnemies;
@@ -331,6 +327,8 @@ private:
 	bool IsTransitionAllowed(EBattleState NewState) const;
 
 	bool HasValidActiveBattle() const;
+	UPROPERTY(Transient) FBattlePlayerActionSession PlayerAction;
+	bool TryStartPlayerPresentation();
 	bool ExecutePlayerCommand(EBattlePlayerCommand Command);
 	void HandlePlayerActionTimeout(int64 ActionId);
 	void ClearPlayerAction();
@@ -373,25 +371,16 @@ private:
 	TWeakObjectPtr<UBattlePresentationComponent> BattlePresentation;
 	int64 BattleSerial = 0;
 	FTimerHandle IntroTimer;
-	int64 QTESessionId = 0;
 	FDelegateHandle QTEChangedHandle;
-	EPlayerActionPhase PlayerActionPhase = EPlayerActionPhase::None;
 	FOnPlayerPhaseChanged PlayerPhaseChanged;
 	FSimpleMulticastDelegate AttackTimingChanged;
 	UPROPERTY(Transient) FEnemyAttackPatternSnapshot ActiveEnemyPattern;
 	bool bHasActiveEnemyPattern = false;
 	FRandomStream PatternRandom;
-	FTimerHandle PlayerActionTimerHandle;
-	TWeakObjectPtr<UMagicPresentationComponent> PlayerPresentation;
-	TWeakObjectPtr<UPlayerUtilityPresentationComponent> UtilityPresentation;
-	EBattlePlayerCommand ActivePlayerCommand = EBattlePlayerCommand::BasicAttack;
 	int32 RemainingPotions = 0;
 	float PotionHealing = 30.0f;
 	float MeleeDamage = 15.0f;
 	int64 NextPlayerActionId = 0;
-	int64 ActivePlayerActionId = 0;
-	float PendingPlayerDamage = 0.0f;
-	bool bPlayerHitApplied = false;
 	FTimerHandle EnemyWindowOpenTimerHandle;
 	FTimerHandle EnemyActionTimeoutTimerHandle;
 	TWeakObjectPtr<UEnemyAttackPresentationComponent> EnemyPresentation;

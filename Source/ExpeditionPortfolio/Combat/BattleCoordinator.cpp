@@ -291,122 +291,6 @@ void UBattleCoordinator::NotifyBattleIntroFinished(int64 BattleId)
 	TryTransitionTo(EBattleState::PlayerCommand);
 }
 
-void UBattleCoordinator::SetPlayerActionPhase(EPlayerActionPhase Phase)
-{
-	if (PlayerActionPhase == Phase) { return; }
-	PlayerActionPhase = Phase;
-	PlayerPhaseChanged.Broadcast(Phase);
-}
-
-void UBattleCoordinator::BeginPlayerPreparation(int64 ActionId, float Duration, float SuccessDuration, float Multiplier, bool bTimingEnabled, const UActionQTEPatternData* Pattern)
-{
-	if (!ActionId || ActionId != ActivePlayerActionId || CurrentState != EBattleState::PlayerAction) { return; }
-	SetPlayerActionPhase(EPlayerActionPhase::Preparing);
-	if (bTimingEnabled && !QTESessionId)
-	{
-		auto* QTE = GetWorld()->GetSubsystem<UActionQTESubsystem>();
-		QTESessionId = Pattern ? QTE->BeginPattern(Pattern) : QTE->BeginQTE(Duration, SuccessDuration, Multiplier);
-		if (!QTESessionId) { UE_LOG(LogBattleCoordinator, Warning, TEXT("Invalid or busy QTE; preparing without bonus.")); }
-		AttackTimingChanged.Broadcast();
-	}
-}
-void UBattleCoordinator::NotifyPlayerPreparationFinished(int64 ActionId)
-{
-	if (!ActionId || ActionId != ActivePlayerActionId || CurrentState != EBattleState::PlayerAction || PlayerActionPhase != EPlayerActionPhase::Preparing) { return; }
-	GetWorld()->GetSubsystem<UActionQTESubsystem>()->FinishWindow(QTESessionId);
-	SetPlayerActionPhase(EPlayerActionPhase::Executing);
-}
-bool UBattleCoordinator::RequestAttackTimingInput()
-{
-	if (bActionInProgress || bTransitionInProgress || CurrentState != EBattleState::PlayerAction || !ActivePlayerActionId
-		|| PlayerActionPhase != EPlayerActionPhase::Preparing || !QTESessionId) { return false; }
-	RefreshAreaPrimaryTarget();
-	if (!HasValidActiveBattle()) { ReturnToExploration(); return false; }
-	TGuardValue<bool> Guard(bActionInProgress, true);
-	return GetWorld()->GetSubsystem<UActionQTESubsystem>()->SubmitInput(QTESessionId);
-}
-FAttackTimingView UBattleCoordinator::GetAttackTimingView() const
-{
-	const auto View = GetWorld()->GetSubsystem<UActionQTESubsystem>()->GetView();
-	return QTESessionId && QTESessionId == View.SessionId ? View : FAttackTimingView();
-}
-bool UBattleCoordinator::RequestPlayerBasicAttack()
-{
-	return RequestPlayerCommand(EBattlePlayerCommand::BasicAttack);
-}
-
-bool UBattleCoordinator::RequestPlayerPowerStrike()
-{
-	return RequestPlayerCommand(EBattlePlayerCommand::PowerStrike);
-}
-
-bool UBattleCoordinator::CanRequestPlayerCommand(const EBattlePlayerCommand Command) const
-{
-	if (bConfirmingTarget || CurrentState != EBattleState::PlayerCommand
-		|| !HasValidActiveBattle())
-	{
-		return false;
-	}
-
- if (IsItemCommand(Command)) { return CanUseItem(Command==EBattlePlayerCommand::UsePotion?GetDefaultItem():PendingItem?PendingItem.Get():GetDefaultItem()); }
- if (GetCharacterActions()) { return CanRequestAction(ResolveCommandAction(Command)); }
- if (!IsContentFreeTest()) { return false; }
- switch (Command)
- {
- case EBattlePlayerCommand::BasicAttack:
-	case EBattlePlayerCommand::MeleeAttack:
-		return true;
-	case EBattlePlayerCommand::UsePotion:
-		if (RemainingPotions<=0) { return false; }
-		if (CanHealAlly(ActivePlayerPawn.Get())) { return true; }
-		for (const auto& Ally:BattleAllies) { if (CanHealAlly(Ally.Get())) { return true; } }
-		return false;
-
-	case EBattlePlayerCommand::PowerStrike:
-		return !bPowerStrikeUsed;
-
-	default:
-		return false;
-	}
-}
-
-bool UBattleCoordinator::RequestPlayerCommand(const EBattlePlayerCommand Command)
-{
-	if (bSelectingTarget || bConfirmingTarget || bTargetNotification) { return false; }
-	if (bTransitionInProgress || bActionInProgress)
-	{
-		LogRejectedCommand(TEXT("RequestPlayerCommand"), TEXT("another battle operation is in progress"));
-		return false;
-	}
-
-	if (CurrentState != EBattleState::PlayerCommand)
-	{
-		LogRejectedCommand(TEXT("RequestPlayerCommand"), TEXT("current state is not PlayerCommand"));
-		return false;
-	}
-
-	if (!HasValidActiveBattle())
-	{
-		LogRejectedCommand(TEXT("RequestPlayerCommand"), TEXT("active battle participants are invalid or defeated"));
-		ReturnToExploration();
-		return false;
-	}
-
-	if (!GetCharacterActions() && Command == EBattlePlayerCommand::PowerStrike && bPowerStrikeUsed)
-	{
-		LogRejectedCommand(TEXT("RequestPlayerCommand"), TEXT("PowerStrike has already been used in this battle"));
-		return false;
-	}
-
-	if (!CanRequestPlayerCommand(Command))
-	{
-		LogRejectedCommand(TEXT("RequestPlayerCommand"), TEXT("command unavailable (unsupported, full health, or no items)"));
-		return false;
-	}
-
-	return ExecutePlayerCommand(Command);
-}
-
 bool UBattleCoordinator::RequestParry()
 {
 	return RequestDefenseCommand(EBattleDefenseCommand::Parry);
@@ -488,143 +372,6 @@ bool UBattleCoordinator::RequestDefenseCommand(const EBattleDefenseCommand Comma
 	return true;
 }
 
-float UBattleCoordinator::GetMagicDamage(const EBattlePlayerCommand Command) const
-{
-	if (Command != EBattlePlayerCommand::BasicAttack && Command != EBattlePlayerCommand::PowerStrike) { return 0.0f; }
-	if (auto* Data=ResolveCommandAction(Command)) { return Data->BaseDamage; }
-	if (!IsContentFreeTest()) { return 0; }
-#if WITH_DEV_AUTOMATION_TESTS
-	const float Fallback = Command == EBattlePlayerCommand::PowerStrike ? PlayerPowerStrikeDamage : PlayerBasicAttackDamage;
-	const UMagicPresentationComponent* Magic = ActivePlayerPawn.IsValid()
-		? ActivePlayerPawn->FindComponentByClass<UMagicPresentationComponent>() : nullptr;
-	const UMagicActionData* Data = Magic
-		? (Command == EBattlePlayerCommand::PowerStrike ? Magic->StrongMagic.Get() : Magic->BasicMagic.Get()) : nullptr;
-	return Data && FMath::IsFinite(Data->BaseDamage) && Data->BaseDamage >= 0.0f ? Data->BaseDamage : Fallback;
-#else
-	return 0;
-#endif
-}
-
-bool UBattleCoordinator::ExecutePlayerCommand(const EBattlePlayerCommand Command)
-{
-	UCharacterActionData* Selected=IsItemCommand(Command)?nullptr:ResolveCommandAction(Command);
- UCombatItemData* SelectedItem=IsItemCommand(Command)?(Command==EBattlePlayerCommand::UsePotion?GetDefaultItem():PendingItem?PendingItem.Get():GetDefaultItem()):nullptr;
-	const float Damage = Selected?Selected->BaseDamage:SelectedItem?SelectedItem->HealingAmount
-		: Command == EBattlePlayerCommand::MeleeAttack ? MeleeDamage : GetMagicDamage(Command);
-	const auto Scope=Selected?Selected->TargetScope:ECharacterActionTargetScope::SingleEnemy;
-	TArray<TWeakObjectPtr<AActor>> AcceptedTargets;
-	if (!SelectedItem)
-	{
-		if (Scope==ECharacterActionTargetScope::AllEnemies)
-		{
-			for (const auto& Enemy:BattleEnemies) { if (IsRegisteredEnemy(Enemy.Get())) { AcceptedTargets.Add(Enemy); } }
-		}
-		else if (IsRegisteredEnemy(ActiveEnemyActor.Get())) { AcceptedTargets.Add(ActiveEnemyActor); }
-		if (AcceptedTargets.IsEmpty()) { return false; }
-	}
-
-
-
-	TGuardValue<bool> ActionGuard(bActionInProgress, true);
-
-	if (!TryTransitionTo(EBattleState::PlayerAction))
-	{
-		return false;
-	}
-
- ActiveAction=Selected;
-	ActiveTargetScope=Scope;
-	ActionTargets=MoveTemp(AcceptedTargets);
- if (Selected) { ++ActionUses.FindOrAdd(ActivePlayerPawn.Get()).FindOrAdd(Selected->ActionId); }
- else if (Command==EBattlePlayerCommand::PowerStrike) { bPowerStrikeUsed=true; }
- ActivePlayerActionId = ++NextPlayerActionId;
-	QTESessionId = 0;
-	AttackTimingChanged.Broadcast();
-	FBattleFacingRestore::Face(ActivePlayerPawn.Get(), ActiveEnemyActor.Get());
-	FBattleFacingRestore::Face(ActiveEnemyActor.Get(), ActivePlayerPawn.Get());
-	ActivePlayerCommand = Command;
- ActiveItem=SelectedItem;
- if (SelectedItem) { --ItemStocks.FindChecked(SelectedItem->ItemId);RemainingPotions=GetRemainingItems(GetDefaultItem()); }
-	PendingPlayerDamage = Damage;
-	bPlayerHitApplied = false;
- if (Selected)
- {
-  ActionPresentation=FindActionExecutor(Selected);
-  if (ActionPresentation.IsValid())
-  {
-   const float Expected=ICharacterActionExecutor::Execute_GetCharacterActionDuration(ActionPresentation.Get(),Selected,false);
-   if (FMath::IsFinite(Expected) && Expected>0 && Expected<60
-    && ICharacterActionExecutor::Execute_StartCharacterAction(ActionPresentation.Get(),Selected,ActivePlayerActionId,ActiveEnemyActor.Get(),false))
-   {
-    if (PlayerActionPhase!=EPlayerActionPhase::Preparing) { SetPlayerActionPhase(EPlayerActionPhase::Executing); }
-    GetWorld()->GetTimerManager().SetTimer(PlayerActionTimerHandle,FTimerDelegate::CreateUObject(this,&ThisClass::HandlePlayerActionTimeout,ActivePlayerActionId),Expected+1,false);
-    return true;
-   }
-  }
-  UE_LOG(LogBattleCoordinator,Warning,TEXT("Character action presentation unavailable: %s"),*GetNameSafe(Selected));
-  bActionInProgress=false;
-  return NotifyPlayerActionFinished(ActivePlayerActionId,!IsContentFreeTest());
- }
- if (SelectedItem)
- {
-  SetPlayerActionPhase(EPlayerActionPhase::Executing);
-  ItemPresentation=ActivePlayerPawn->FindComponentByClass<UItemPresentationComponent>();
-  if (ItemPresentation.IsValid())
-  {
-   const float Expected=ItemPresentation->GetExpectedDuration();
-   if (FMath::IsFinite(Expected) && Expected>0 && Expected<60 && ItemPresentation->BeginUse(SelectedItem,ActivePlayerActionId,ItemTarget.IsValid()?ItemTarget.Get():ActivePlayerPawn.Get()))
-   {
-    GetWorld()->GetTimerManager().SetTimer(PlayerActionTimerHandle,FTimerDelegate::CreateUObject(this,&ThisClass::HandlePlayerActionTimeout,ActivePlayerActionId),Expected+1,false);
-    return true;
-   }
-  }
-  bActionInProgress=false;return NotifyPlayerActionFinished(ActivePlayerActionId,!IsContentFreeTest());
- }
- if (!IsContentFreeTest()) { bActionInProgress=false;return NotifyPlayerActionFinished(ActivePlayerActionId,true); }
-
-#if WITH_DEV_AUTOMATION_TESTS
- if (Command == EBattlePlayerCommand::MeleeAttack || IsItemCommand(Command))
-	{
-		SetPlayerActionPhase(EPlayerActionPhase::Executing);
-		UtilityPresentation = ActivePlayerPawn->FindComponentByClass<UPlayerUtilityPresentationComponent>();
-		if (UtilityPresentation.IsValid())
-		{
-			const float Expected = UtilityPresentation->GetExpectedDuration(Command);
-			if (FMath::IsFinite(Expected) && Expected > 0 && Expected < 60
-				&& UtilityPresentation->BeginAction(Command, ActivePlayerActionId, IsItemCommand(Command) ? (ItemTarget.IsValid()?ItemTarget.Get():ActivePlayerPawn.Get()) : ActiveEnemyActor.Get()))
-			{
-				GetWorld()->GetTimerManager().SetTimer(PlayerActionTimerHandle,
-					FTimerDelegate::CreateUObject(this, &ThisClass::HandlePlayerActionTimeout, ActivePlayerActionId), Expected + 1, false);
-				return true;
-			}
-			UE_LOG(LogBattleCoordinator, Warning, TEXT("Utility presentation unavailable; resolving accepted command without animation."));
-		}
-		bActionInProgress = false;
-		return NotifyPlayerActionFinished(ActivePlayerActionId, false);
-	}
-	PlayerPresentation = ActivePlayerPawn->FindComponentByClass<UMagicPresentationComponent>();
-	if (PlayerPresentation.IsValid())
-	{
-		const float Expected = PlayerPresentation->GetExpectedDuration(Command);
-		if (FMath::IsFinite(Expected) && Expected > 0.0f && Expected < 60.0f
-			&& PlayerPresentation->BeginMagicAction(Command, ActivePlayerActionId, ActiveEnemyActor.Get()))
-		{
-			if (PlayerActionPhase != EPlayerActionPhase::Preparing) { SetPlayerActionPhase(EPlayerActionPhase::Executing); }
-			GetWorld()->GetTimerManager().SetTimer(PlayerActionTimerHandle,
-				FTimerDelegate::CreateUObject(this, &ThisClass::HandlePlayerActionTimeout, ActivePlayerActionId), Expected + 1.0f, false);
-			return true;
-		}
-		UE_LOG(LogBattleCoordinator, Warning, TEXT("Magic presentation failed; resolving accepted command without animation."));
-	}
-	// Keep the headless/no-presentation path usable for core tests and prototype pawns.
-	// Public signal handlers normally reject reentrancy; release the command guard for this internal fallback.
-	bActionInProgress = false;
-	return NotifyPlayerActionFinished(ActivePlayerActionId, false);
-#else
- return false;
-#endif
-}
-
 bool UBattleCoordinator::ApplyCombatEffect(UCombatantComponent* Target, float Amount, ECombatNumberKind Kind)
 {
 	if (!IsValid(Target) || Target->IsDefeated() || !FMath::IsFinite(Amount) || Amount<0) { return false; }
@@ -639,117 +386,6 @@ bool UBattleCoordinator::ApplyCombatEffect(UCombatantComponent* Target, float Am
 	CombatNumberApplied.Broadcast(Number);
 	CombatNumberAppliedBlueprint.Broadcast(Number);
 	return true;
-}
-
-bool UBattleCoordinator::NotifyPlayerActionHit(const int64 ActionId)
-{
-	if (ActionId == 0 || ActionId != ActivePlayerActionId || CurrentState != EBattleState::PlayerAction
-		|| bActionInProgress || bTransitionInProgress || bPlayerHitApplied || PlayerActionPhase == EPlayerActionPhase::Preparing)
-	{
-		return false;
-	}
-	TGuardValue<bool> ActionGuard(bActionInProgress, true);
-	RefreshAreaPrimaryTarget();
-	if (!HasValidActiveBattle())
-	{
-		ReturnToExploration();
-		return false;
-	}
-	bPlayerHitApplied = true;
-	const float Multiplier = GetWorld()->GetSubsystem<UActionQTESubsystem>()->GetDamageMultiplier(QTESessionId);
-	const float AppliedAmount = PendingPlayerDamage * Multiplier;
-	AActor* HealTarget=ItemTarget.IsExplicitlyNull()?ActivePlayerPawn.Get():ItemTarget.Get();
-	if (IsItemCommand(ActivePlayerCommand) && !CanHealAlly(HealTarget)) { return false; }
-	bool bApplied=false;
-	if (IsItemCommand(ActivePlayerCommand))
-	{
-		bApplied=ApplyCombatEffect(HealTarget->FindComponentByClass<UCombatantComponent>(),AppliedAmount,ECombatNumberKind::Healing);
-	}
-	else
-	{
-		// Apply the accepted batch under one action guard. A lethal first target cannot end the batch.
-		const auto HitTargets=GetActiveActionTargets();
-		for (AActor* Target:HitTargets)
-		{
-			if (!IsRegisteredEnemy(Target)) { continue; }
-			bApplied=ApplyCombatEffect(Target->FindComponentByClass<UCombatantComponent>(),AppliedAmount,
-				Multiplier>1.f?ECombatNumberKind::BonusDamage:ECombatNumberKind::Damage) || bApplied;
-		}
-	}
-	if (!bApplied)
-	{
-		ReturnToExploration();
-		return false;
-	}
-	UE_LOG(LogBattleCoordinator, Log, TEXT("Player effect applied: Action=%lld Command=%s Amount=%.1f"),
-		ActionId, *UEnum::GetValueAsString(ActivePlayerCommand), AppliedAmount);
-	TryFinishBattle();
-	return true;
-}
-
-bool UBattleCoordinator::NotifyPlayerActionFinished(const int64 ActionId, const bool bInterrupted)
-{
-	if (ActionId == 0 || ActionId != ActivePlayerActionId || CurrentState != EBattleState::PlayerAction
-		|| bActionInProgress || bTransitionInProgress)
-	{
-		return false;
-	}
-	// Missing hit notify: complete the accepted command once at a normal animation end.
-	// Interrupted/timeout actions do not manufacture a hit; the consumed skill stays consumed.
-	if (!bInterrupted && !bPlayerHitApplied)
-	{
-
-#if WITH_DEV_AUTOMATION_TESTS
-		if (PlayerPresentation.IsValid())
-		{
-			UE_LOG(LogBattleCoordinator, Warning, TEXT("Magic hit notify missing; applying one hit at normal completion."));
-		}
-
-#endif
-		if (!NotifyPlayerActionHit(ActionId)) { return false; }
-	}
-	if (CurrentState == EBattleState::Victory || CurrentState == EBattleState::Defeat) { return true; }
-	TGuardValue<bool> ActionGuard(bActionInProgress, true);
-	if (!ActivePlayerPawn.IsValid() || !ActiveEnemyActor.IsValid() || !PlayerCombatant.IsValid() || !EnemyCombatant.IsValid())
-	{
-		ReturnToExploration();
-		return false;
-	}
-	ClearPlayerAction();
-	if (!TryTransitionTo(EBattleState::TurnEnd)) { ReturnToExploration(); return false; }
-	return ResolveTurnEnd(ECompletedAction::Player);
-}
-
-void UBattleCoordinator::HandlePlayerActionTimeout(const int64 ActionId)
-{
-	if (ActionId != ActivePlayerActionId || CurrentState != EBattleState::PlayerAction) { return; }
-	UE_LOG(LogBattleCoordinator, Warning, TEXT("Magic action completion timed out; cancelling presentation."));
-	NotifyPlayerActionFinished(ActionId, true);
-}
-
-void UBattleCoordinator::ClearPlayerAction()
-{
-	ActionTargets.Reset();
-	ActiveTargetScope=ECharacterActionTargetScope::SingleEnemy;
-	ItemTarget.Reset();
-	if (GetWorld()) { GetWorld()->GetSubsystem<UActionQTESubsystem>()->CancelQTE(QTESessionId); }
-	QTESessionId = 0;
-	SetPlayerActionPhase(EPlayerActionPhase::None);
-	ActivePlayerActionId = 0;
-	if (GetWorld()) { GetWorld()->GetTimerManager().ClearTimer(PlayerActionTimerHandle); }
-	if (ItemPresentation.IsValid()) { ItemPresentation->StopPresentation(); }
-	ItemPresentation.Reset();ActiveItem=nullptr;
-	if (ActionPresentation.IsValid()) { ICharacterActionExecutor::Execute_StopCharacterAction(ActionPresentation.Get()); }
-	ActionPresentation.Reset(); ActiveAction=nullptr;
-
-#if WITH_DEV_AUTOMATION_TESTS
-	if (PlayerPresentation.IsValid()) { PlayerPresentation->StopPresentation(); }
-	if (UtilityPresentation.IsValid()) { UtilityPresentation->StopPresentation(); }
-	UtilityPresentation.Reset();
-	PlayerPresentation.Reset();
-#endif
-	PendingPlayerDamage = 0.0f;
-	bPlayerHitApplied = false;
 }
 
 bool UBattleCoordinator::DoesSupportWorldType(const EWorldType::Type WorldType) const
@@ -1267,7 +903,7 @@ void UBattleCoordinator::ClearBattleContext()
 	bResultReady = false;
 	BattleAllies.Reset();
 	BattleEnemies.Reset(); TurnOrder.Reset(); ExplorationPlayerPawn.Reset(); TurnIndex=0; BattleRound=1;
-	PendingAction=nullptr;PendingItem=nullptr;ActiveItem=nullptr;ActiveRules=nullptr;ItemStocks.Reset();EntryItemStocks.Reset();ActionUses.Reset(); EntryActionUses.Reset();
+	PendingAction=nullptr;PendingItem=nullptr;PlayerAction.Item=nullptr;ActiveRules=nullptr;ItemStocks.Reset();EntryItemStocks.Reset();ActionUses.Reset(); EntryActionUses.Reset();
 	if (GetWorld()) { GetWorld()->GetTimerManager().ClearTimer(TargetConfirmationTimer); }
 	bConfirmingTarget = false;
 	bSelectingTarget = false;
@@ -1355,9 +991,9 @@ bool UBattleCoordinator::TryFinishBattle()
 	}
 	ClearBattleTimers();
 	auto& Timers=GetWorld()->GetTimerManager();
-	Timers.ClearTimer(IntroTimer); Timers.ClearTimer(TargetConfirmationTimer); Timers.ClearTimer(PlayerActionTimerHandle);
+	Timers.ClearTimer(IntroTimer); Timers.ClearTimer(TargetConfirmationTimer); Timers.ClearTimer(PlayerAction.TimeoutTimer);
 	Timers.ClearTimer(EnemyWindowOpenTimerHandle); Timers.ClearTimer(EnemyActionTimeoutTimerHandle); Timers.ClearTimer(ParryCounterTimerHandle);
-	GetWorld()->GetSubsystem<UActionQTESubsystem>()->CancelQTE(QTESessionId);
+	GetWorld()->GetSubsystem<UActionQTESubsystem>()->CancelQTE(PlayerAction.QTESessionId);
 	bSelectingTarget=false; bConfirmingTarget=false;
 	if (!TryTransitionTo(bDefeat?EBattleState::Defeat:EBattleState::Victory)) { return false; }
 	// No local presentation (automation/server) still exposes the same explicit result decisions.
@@ -1569,62 +1205,6 @@ void UBattleCoordinator::LogRejectedCommand(const TCHAR* CommandName, const TCHA
 		Reason);
 }
 
-UCharacterCombatData* UBattleCoordinator::GetCharacterActions() const
-{ return PlayerCombatant.IsValid()?PlayerCombatant->CharacterActions.Get():nullptr; }
-UCharacterActionData* UBattleCoordinator::ResolveCommandAction(EBattlePlayerCommand Command) const
-{
- const auto* Profile=GetCharacterActions();
- if (!Profile) { return nullptr; }
- if (Command==EBattlePlayerCommand::CharacterAction) { return PendingAction; }
- if (Command==EBattlePlayerCommand::MeleeAttack) { return Profile->BasicAttack; }
- const int32 Index=Command==EBattlePlayerCommand::BasicAttack?0:Command==EBattlePlayerCommand::PowerStrike?1:INDEX_NONE;
- return Profile->Skills.IsValidIndex(Index)?Profile->Skills[Index].Get():nullptr;
-}
-float UBattleCoordinator::GetMeleeDamage() const
-{ const auto* Action=ResolveCommandAction(EBattlePlayerCommand::MeleeAttack); return Action?Action->BaseDamage:IsContentFreeTest()?MeleeDamage:0; }
-int32 UBattleCoordinator::GetRemainingActionUses(UCharacterActionData* Action) const
-{
- if (!Action) { return 0; }
- if (Action->UsesPerEncounter==0) { return -1; }
- const auto* Uses=ActionUses.Find(ActivePlayerPawn.Get());
- return FMath::Max(0,Action->UsesPerEncounter-(Uses?Uses->FindRef(Action->ActionId):0));
-}
-bool UBattleCoordinator::IsActionExhausted(UCharacterActionData* Action) const
-{ return Action && Action->UsesPerEncounter>0 && GetRemainingActionUses(Action)==0; }
-bool UBattleCoordinator::IsCommandExhausted(EBattlePlayerCommand Command) const
-{ return GetCharacterActions()?IsActionExhausted(ResolveCommandAction(Command)):IsContentFreeTest() && Command==EBattlePlayerCommand::PowerStrike && bPowerStrikeUsed; }
-UActorComponent* UBattleCoordinator::FindActionExecutor(UCharacterActionData* Action) const
-{
- if (!Action || !ActivePlayerPawn.IsValid()) { return nullptr; }
- TInlineComponentArray<UActorComponent*> Components(ActivePlayerPawn.Get());
- for (UActorComponent* Component:Components)
- {
-  if ((!Action->ExecutorComponentName.IsNone() && Component->GetFName()!=Action->ExecutorComponentName)
-   || !Component->GetClass()->ImplementsInterface(UCharacterActionExecutor::StaticClass())) { continue; }
-  if (ICharacterActionExecutor::Execute_SupportsCharacterAction(Component,Action)) { return Component; }
- }
- return nullptr;
-}
-bool UBattleCoordinator::CanRequestAction(UCharacterActionData* Action) const
-{
- const auto* Profile=GetCharacterActions();
- return CurrentState==EBattleState::PlayerCommand && !bConfirmingTarget && HasValidActiveBattle()
-  && Profile && Profile->IsValidConfiguration() && Profile->ContainsCommand(Action) && !IsActionExhausted(Action)
-  && (IsContentFreeTest() || (FindActionExecutor(Action) && ICharacterActionExecutor::Execute_GetCharacterActionDuration(FindActionExecutor(Action),Action,false)>0));
-}
-bool UBattleCoordinator::RequestPlayerAction(UCharacterActionData* Action)
-{
- if (bSelectingTarget || bConfirmingTarget || bTargetNotification || bTransitionInProgress || bActionInProgress || !CanRequestAction(Action)) { return false; }
- PendingAction=Action;
- return ExecutePlayerCommand(EBattlePlayerCommand::CharacterAction);
-}
-bool UBattleCoordinator::BeginActionSelection(UCharacterActionData* Action)
-{
- if (bSelectingTarget || bConfirmingTarget || bTargetNotification || bActionInProgress || bTransitionInProgress || !CanRequestAction(Action)) { return false; }
- PendingAction=Action;
- if (BeginCommandSelection(EBattlePlayerCommand::CharacterAction)) { return true; }
- PendingAction=nullptr; return false;
-}
 void UBattleCoordinator::StopCounterPresentation()
 {
  if (!CounterPresentation.IsValid()) { return; }
@@ -1709,34 +1289,4 @@ bool UBattleCoordinator::ValidateCharacterSetup(APawn* Player) const
   if (!bFound) { return false; }
  }
  return true;
-}
-TArray<UCombatItemData*> UBattleCoordinator::GetAvailableItems() const
-{
- TArray<UCombatItemData*> Result;
- if (ActiveRules) { for (const auto& Stock:ActiveRules->InitialItems) { if (Stock.Item) { Result.Add(Stock.Item); } } }
- return Result;
-}
-UCombatItemData* UBattleCoordinator::GetDefaultItem() const
-{ return ActiveRules && !ActiveRules->InitialItems.IsEmpty()?ActiveRules->InitialItems[0].Item.Get():nullptr; }
-int32 UBattleCoordinator::GetRemainingItems(UCombatItemData* Item) const
-{ return Item?ItemStocks.FindRef(Item->ItemId):0; }
-bool UBattleCoordinator::CanUseItem(UCombatItemData* Item) const
-{
- if (!Item || !Item->IsValidConfiguration() || CurrentState!=EBattleState::PlayerCommand || bConfirmingTarget || !HasValidActiveBattle()
-  || !GetAvailableItems().Contains(Item) || GetRemainingItems(Item)<=0) { return false; }
- if (!IsContentFreeTest())
- {
-  const auto* Presentation=ActivePlayerPawn->FindComponentByClass<UItemPresentationComponent>();
-  if (!Presentation || Presentation->GetExpectedDuration()<=0) { return false; }
- }
- if (CanHealAlly(ActivePlayerPawn.Get())) { return true; }
- for (const auto& Ally:BattleAllies) { if (CanHealAlly(Ally.Get())) { return true; } }
- return false;
-}
-bool UBattleCoordinator::BeginItemSelection(UCombatItemData* Item)
-{
- if (bSelectingTarget || bConfirmingTarget || bTargetNotification || bActionInProgress || bTransitionInProgress || !CanUseItem(Item)) { return false; }
- PendingItem=Item;
- if (BeginCommandSelection(EBattlePlayerCommand::UseItem)) { return true; }
- PendingItem=nullptr;return false;
 }

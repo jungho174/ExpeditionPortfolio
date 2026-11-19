@@ -63,13 +63,13 @@ bool FMagicProjectileLifecycleTest::RunTest(const FString& Parameters)
 		Enemy->SetActorLocation(FVector(1000, 0, 0));
 		Battle->RequestBattleStart(Encounter, Player, Enemy);
 		Battle->TryTransitionTo(EBattleState::PlayerAction);
-		Battle->ActivePlayerActionId = 91;
-		Battle->PendingPlayerDamage = 25;
-		Battle->bPlayerHitApplied = false;
+		Battle->PlayerAction.Id = 91;
+		Battle->PlayerAction.EffectAmount = 25;
+		Battle->PlayerAction.bHitApplied = false;
 		auto* Presentation = NewObject<UMagicPresentationComponent>(Player);
 		Player->AddInstanceComponent(Presentation);
 		Presentation->RegisterComponent();
-		Battle->PlayerPresentation = Presentation;
+		Battle->PlayerAction.MagicPresentation = Presentation;
 		Presentation->ActiveId = 91;
 		Presentation->Mesh = Player->GetMesh();
 		Presentation->TargetActor = Enemy;
@@ -125,7 +125,7 @@ bool FMagicProjectileLifecycleTest::RunTest(const FString& Parameters)
 			}
 		}
 		TestFalse(TEXT("No remaining travel tick"), Presentation->IsComponentTickEnabled());
-		TestEqual(TEXT("Context cleaned once"), Battle->ActivePlayerActionId, int64(0));
+		TestEqual(TEXT("Context cleaned once"), Battle->PlayerAction.Id, int64(0));
 	}
 	return true;
 }

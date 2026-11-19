@@ -45,7 +45,7 @@ bool FAreaActionRulesTest::RunTest(const FString& Parameters)
 			Battle->OnCombatNumber().AddLambda([&](const FCombatNumber& Number)
 			{
 				++Numbers;FinishedTooEarly|=Battle->GetCurrentState()!=EBattleState::PlayerAction;
-				Reentered|=Battle->NotifyPlayerActionHit(Battle->ActivePlayerActionId);
+				Reentered|=Battle->NotifyPlayerActionHit(Battle->PlayerAction.Id);
 			});
 			if (Case==0)
 			{
@@ -77,9 +77,9 @@ bool FAreaActionRulesTest::RunTest(const FString& Parameters)
 		else
 		{
 			// Exercise the public hit boundary with a held presentation and the real QTE subsystem.
-			Battle->TryTransitionTo(EBattleState::PlayerAction);Battle->ActivePlayerActionId=501;
-			Battle->ActivePlayerCommand=EBattlePlayerCommand::CharacterAction;Battle->ActiveAction=Area;
-			Battle->ActiveTargetScope=ECharacterActionTargetScope::AllEnemies;Battle->ActionTargets={Enemy1,Enemy2,Dead};Battle->PendingPlayerDamage=Case==6?0:30;
+			Battle->TryTransitionTo(EBattleState::PlayerAction);Battle->PlayerAction.Id=501;
+			Battle->PlayerAction.Command=EBattlePlayerCommand::CharacterAction;Battle->PlayerAction.Action=Area;
+			Battle->PlayerAction.TargetScope=ECharacterActionTargetScope::AllEnemies;Battle->PlayerAction.Targets={Enemy1,Enemy2,Dead};Battle->PlayerAction.EffectAmount=Case==6?0:30;
 			Battle->BeginPlayerPreparation(501,1,.2f,1.5f,true);
 			TestFalse(TEXT("Preparation has no early damage"),Battle->NotifyPlayerActionHit(501));
 			if (Case==2 || Case==5 || Case==7) { World->TimeSeconds+=.9f;TestTrue(TEXT("Perfect accepted once"),Battle->RequestAttackTimingInput()); }

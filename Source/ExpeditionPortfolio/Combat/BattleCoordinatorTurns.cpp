@@ -103,7 +103,7 @@ void UBattleCoordinator::HandleParticipantDefeat()
 		SetTurnParticipants(GetActingCombatant(),true);BroadcastTargetSelection();return;
 	}
 	if ((CurrentState==EBattleState::PlayerCommand && bAllyKO)
-		|| (CurrentState==EBattleState::PlayerAction && (bAllyKO || (bEnemyKO && !bPlayerHitApplied))))
+		|| (CurrentState==EBattleState::PlayerAction && (bAllyKO || (bEnemyKO && !PlayerAction.bHitApplied))))
 	{
 		GetWorld()->GetTimerManager().ClearTimer(TargetConfirmationTimer);
 		bSelectingTarget=false;bConfirmingTarget=false;Targets.Reset();PendingAction=nullptr;PendingItem=nullptr;

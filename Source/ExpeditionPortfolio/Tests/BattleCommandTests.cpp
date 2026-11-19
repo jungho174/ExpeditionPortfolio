@@ -157,9 +157,9 @@ bool FBattleCoordinatorPlayerActionLifecycleTest::RunTest(const FString& Paramet
 		UCombatantComponent* EnemyCombatant = AddCombatantComponent(Enemy);
 		Coordinator->RequestBattleStart(Encounter, Player, Enemy);
 		Coordinator->TryTransitionTo(EBattleState::PlayerAction);
-		Coordinator->ActivePlayerActionId = 41;
-		Coordinator->PendingPlayerDamage = 25.0f;
-		Coordinator->bPlayerHitApplied = false;
+		Coordinator->PlayerAction.Id = 41;
+		Coordinator->PlayerAction.EffectAmount = 25.0f;
+		Coordinator->PlayerAction.bHitApplied = false;
 		TestFalse(TEXT("Old action cannot hit"), Coordinator->NotifyPlayerActionHit(40));
 		TestFalse(TEXT("Old action cannot complete"), Coordinator->NotifyPlayerActionFinished(40, false));
 		TestEqual(TEXT("No early damage"), EnemyCombatant->GetCurrentHealth(), 100.0f);
@@ -184,7 +184,7 @@ bool FBattleCoordinatorPlayerActionLifecycleTest::RunTest(const FString& Paramet
 		else if (Case == 3)
 		{
 			AddExpectedError(TEXT("completion timed out"), EAutomationExpectedErrorFlags::Contains, 1);
-			World->GetTimerManager().SetTimer(Coordinator->PlayerActionTimerHandle,
+			World->GetTimerManager().SetTimer(Coordinator->PlayerAction.TimeoutTimer,
 				FTimerDelegate::CreateUObject(Coordinator, &UBattleCoordinator::HandlePlayerActionTimeout, int64(41)), 0.5f, false);
 			AdvanceBattleTime(World, 0.51f);
 			TestEqual(TEXT("Timeout after hit does not hit twice"), EnemyCombatant->GetCurrentHealth(), 75.0f);
@@ -207,7 +207,7 @@ bool FBattleCoordinatorPlayerActionLifecycleTest::RunTest(const FString& Paramet
 			if (Case!=5) { TestTrue(TEXT("Normal completion including missing notify"), Coordinator->NotifyPlayerActionFinished(41, false)); }
 			TestEqual(TEXT("Exactly one hit"), EnemyCombatant->GetCurrentHealth(), Case == 5 ? 0.0f : 75.0f);
 		}
-		TestEqual(TEXT("Action context cleared"), Coordinator->ActivePlayerActionId, int64(0));
+		TestEqual(TEXT("Action context cleared"), Coordinator->PlayerAction.Id, int64(0));
 		TestFalse(TEXT("Late hit rejected"), Coordinator->NotifyPlayerActionHit(41));
 		TestFalse(TEXT("Duplicate completion rejected"), Coordinator->NotifyPlayerActionFinished(41, false));
 		TestEqual(TEXT("Next flow reached"), Coordinator->GetCurrentState(),

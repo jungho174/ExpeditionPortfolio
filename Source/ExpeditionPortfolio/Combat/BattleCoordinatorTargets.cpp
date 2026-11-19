@@ -30,8 +30,8 @@ TArray<AActor*> UBattleCoordinator::GetSelectedTargets() const
 TArray<AActor*> UBattleCoordinator::GetActiveActionTargets() const
 {
 	TArray<AActor*> Result;
-	for (const auto& Target:ActionTargets) { if (Target.IsValid()) { Result.Add(Target.Get()); } }
-	if (ActionTargets.IsEmpty() && !IsActiveActionAreaAttack() && CurrentState==EBattleState::PlayerAction && ActiveEnemyActor.IsValid()) { Result.Add(ActiveEnemyActor.Get()); }
+	for (const auto& Target:PlayerAction.Targets) { if (Target.IsValid()) { Result.Add(Target.Get()); } }
+	if (PlayerAction.Targets.IsEmpty() && !IsActiveActionAreaAttack() && CurrentState==EBattleState::PlayerAction && ActiveEnemyActor.IsValid()) { Result.Add(ActiveEnemyActor.Get()); }
 	return Result;
 }
 

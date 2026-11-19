@@ -52,7 +52,7 @@ bool FAttackTimingIntegrationTest::RunTest(const FString& Parameters)
 		auto* Player=World->SpawnActor<APawn>(); auto* Enemy=World->SpawnActor<AActor>();
 		AddCombatantComponent(Player); auto* HP=AddCombatantComponent(Enemy);
 		Battle->RequestBattleStart(World->SpawnActor<AActor>(),Player,Enemy); Battle->TryTransitionTo(EBattleState::PlayerAction);
-		Battle->ActivePlayerActionId=101; Battle->ActivePlayerCommand=EBattlePlayerCommand::BasicAttack; Battle->PendingPlayerDamage=17;
+		Battle->PlayerAction.Id=101; Battle->PlayerAction.Command=EBattlePlayerCommand::BasicAttack; Battle->PlayerAction.EffectAmount=17;
 		Battle->BeginPlayerPreparation(101,1,.2f,1.7f,true);
 		TArray<FCombatNumber> Numbers;
 		Battle->OnCombatNumber().AddLambda([&](const FCombatNumber& Number) { Numbers.Add(Number); });
@@ -74,7 +74,7 @@ bool FAttackTimingIntegrationTest::RunTest(const FString& Parameters)
 		auto* Player=World->SpawnActor<APawn>(); auto* Enemy=World->SpawnActor<AActor>(); auto* Encounter=World->SpawnActor<AActor>();
 		AddCombatantComponent(Player); auto* HP=AddCombatantComponent(Enemy);
 		Battle->RequestBattleStart(Encounter,Player,Enemy); Battle->TryTransitionTo(EBattleState::PlayerAction);
-		Battle->ActivePlayerActionId=81; Battle->ActivePlayerCommand=EBattlePlayerCommand::PowerStrike; Battle->PendingPlayerDamage=40;
+		Battle->PlayerAction.Id=81; Battle->PlayerAction.Command=EBattlePlayerCommand::PowerStrike; Battle->PlayerAction.EffectAmount=40;
 		Battle->BeginPlayerPreparation(81,1,.2f,1.5f,true); World->GetSubsystem<UActionQTESubsystem>()->Timing.StartedAt-=.9;
 		TestTrue(TEXT("Timing success accepted"),Battle->RequestAttackTimingInput());
 		AdvanceBattleTime(World,1.01f);
@@ -96,9 +96,9 @@ bool FAttackTimingIntegrationTest::RunTest(const FString& Parameters)
 		AddCombatantComponent(Player); auto* HP=AddCombatantComponent(Enemy);
 		TestTrue(TEXT("Start"),Battle->RequestBattleStart(Encounter,Player,Enemy));
 		Battle->TryTransitionTo(EBattleState::PlayerAction);
-		Battle->ActivePlayerActionId=31;
-		Battle->ActivePlayerCommand=EBattlePlayerCommand::PowerStrike;
-		Battle->PendingPlayerDamage=40;
+		Battle->PlayerAction.Id=31;
+		Battle->PlayerAction.Command=EBattlePlayerCommand::PowerStrike;
+		Battle->PlayerAction.EffectAmount=40;
 		Battle->BeginPlayerPreparation(31,2.5f,.3f,1.5f,true);
 		TestTrue(TEXT("View exposes timing window"),Battle->GetAttackTimingView().bActive);
 		Battle->NotifyPlayerPreparationFinished(30);
