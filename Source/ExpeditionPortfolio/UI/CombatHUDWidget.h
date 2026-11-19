@@ -85,10 +85,13 @@ protected:
 
 private:
 	int32 PaintHealthHUD(const FGeometry& Geometry,FSlateWindowElementList& Elements,int32 Layer) const;
- void RefreshCharacterSkills();
- void RefreshItems();
- UPROPERTY(Transient) TObjectPtr<UScrollBox> ItemList;
- UPROPERTY(Transient) TArray<TObjectPtr<UCombatMenuEntryButton>> ItemButtons;
+	void RefreshCharacterSkills();
+	void RefreshItems();
+	UScrollBox* CreateCommandList(FName CanvasName);
+	UCombatMenuEntryButton* AddCommandRow(UScrollBox& List, int32 Entry, const UButton* ButtonTemplate,
+		const UTextBlock* LabelTemplate, bool bWrapText);
+	UPROPERTY(Transient) TObjectPtr<UScrollBox> ItemList;
+	UPROPERTY(Transient) TArray<TObjectPtr<UCombatMenuEntryButton>> ItemButtons;
 	TWeakObjectPtr<UCharacterCombatData> MenuCharacter;
 	UPROPERTY(Transient) TObjectPtr<UScrollBox> SkillList;
 	UPROPERTY(Transient) TArray<TObjectPtr<UCombatMenuEntryButton>> SkillButtons;
@@ -101,6 +104,7 @@ private:
 	void BindActiveCombatants();
 	void UnbindActiveCombatants();
 	void RefreshBattleView();
+	void RefreshHealthDisplay(EBattleState BattleState);
 	void HideDefenseResult();
 	void RefreshCommandMenu();
 	bool CanNavigateCommandMenu() const;

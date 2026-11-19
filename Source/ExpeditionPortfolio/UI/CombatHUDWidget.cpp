@@ -164,9 +164,13 @@ void UCombatHUDWidget::HideDefenseResult()
 
 void UCombatHUDWidget::HandleCombatantHealthChanged(const float PreviousHealth, const float NewHealth)
 {
-	(void)PreviousHealth;
-	(void)NewHealth;
-	RefreshBattleView();
+	// 생존 여부가 바뀌면 공격과 물약의 대상 조건도 다시 확인한다.
+	if ((PreviousHealth <= 0.0f) != (NewHealth <= 0.0f))
+	{
+		RefreshBattleView();
+		return;
+	}
+	RefreshHealthDisplay(BattleCoordinator.IsValid() ? BattleCoordinator->GetCurrentState() : EBattleState::Exploration);
 }
 
 void UCombatHUDWidget::HandleCombatantDefeated()
@@ -243,6 +247,12 @@ void UCombatHUDWidget::RefreshBattleView()
 		? ESlateVisibility::Collapsed
 		: ESlateVisibility::Visible);
 
+	RefreshHealthDisplay(BattleState);
+	RefreshCommandMenu();
+}
+
+void UCombatHUDWidget::RefreshHealthDisplay(const EBattleState BattleState)
+{
 	const float PlayerCurrentHealth = PlayerCombatant.IsValid() ? PlayerCombatant->GetCurrentHealth() : 0.0f;
 	const float PlayerMaxHealth = PlayerCombatant.IsValid() ? PlayerCombatant->GetMaxHealth() : 0.0f;
 	const float EnemyCurrentHealth = EnemyCombatant.IsValid() ? EnemyCombatant->GetCurrentHealth() : 0.0f;
@@ -260,12 +270,15 @@ void UCombatHUDWidget::RefreshBattleView()
 		EnemyMaxHealth,
 		bCanUseBasicAttack,
 		bCanUsePowerStrike);
-	// Keep old Blueprint bindings valid while replacing their visual presentation.
+	// 기존 블루프린트에 HP를 알린 뒤 화면에는 직접 그리는 체력 바만 표시한다.
 	for (const TCHAR* Name : {TEXT("TXT_PlayerHealth"),TEXT("PB_PlayerHealth"),TEXT("TXT_EnemyHealth"),TEXT("PB_EnemyHealth")})
 	{
 		if (UWidget* Health=GetWidgetFromName(Name)) { Health->SetVisibility(ESlateVisibility::Collapsed); }
 	}
-	RefreshCommandMenu();
+	if (const TSharedPtr<SWidget> Widget = GetCachedWidget())
+	{
+		Widget->Invalidate(EInvalidateWidgetReason::Paint);
+	}
 }
 
 void UCombatHUDWidget::SelectMenuEntry(int32 Entry)
@@ -660,89 +673,116 @@ void UCombatHUDWidget::UpdateMenuAnchor(float DeltaTime)
 	if (auto* MenuSlot = Cast<UCanvasPanelSlot>(Root->Slot)) { MenuSlot->SetPosition(Position); }
 }
 
+UScrollBox* UCombatHUDWidget::CreateCommandList(FName CanvasName)
+{
+	auto* Canvas = Cast<UCanvasPanel>(GetWidgetFromName(CanvasName));
+	if (!Canvas || !WidgetTree) { return nullptr; }
+
+	UScrollBox* List = WidgetTree->ConstructWidget<UScrollBox>();
+	UCanvasPanelSlot* CanvasSlot = Canvas->AddChildToCanvas(List);
+	CanvasSlot->SetPosition(FVector2D::ZeroVector);
+	CanvasSlot->SetSize(FVector2D(530, 260));
+	return List;
+}
+
+UCombatMenuEntryButton* UCombatHUDWidget::AddCommandRow(UScrollBox& List, int32 Entry,
+	const UButton* ButtonTemplate, const UTextBlock* LabelTemplate, bool bWrapText)
+{
+	auto* Button = WidgetTree->ConstructWidget<UCombatMenuEntryButton>();
+	if (ButtonTemplate) { Button->SetStyle(ButtonTemplate->GetStyle()); }
+	Button->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+	Button->SetPixelSnapping(EWidgetPixelSnapping::Disabled);
+
+	auto* Label = WidgetTree->ConstructWidget<UTextBlock>();
+	FSlateFontInfo Font = LabelTemplate ? LabelTemplate->GetFont() : GetDefault<UTextBlock>()->GetFont();
+	Font.Size = 17;
+	Label->SetFont(Font);
+	Label->SetAutoWrapText(bWrapText);
+	Label->SetVisibility(ESlateVisibility::HitTestInvisible);
+	Button->AddChild(Label);
+	Button->BindEntry(this, Entry);
+
+	auto* Row = WidgetTree->ConstructWidget<USizeBox>();
+	Row->SetHeightOverride(105);
+	Row->AddChild(Button);
+	auto* ListSlot = CastChecked<UScrollBoxSlot>(List.AddChild(Row));
+	ListSlot->SetPadding(FMargin(30, 9, 30, 9));
+	ListSlot->SetHorizontalAlignment(HAlign_Fill);
+	return Button;
+}
+
 void UCombatHUDWidget::RefreshCharacterSkills()
 {
- UCharacterCombatData* Profile=BattleCoordinator.IsValid()?BattleCoordinator->GetCharacterActions():nullptr;
- const bool bRebuild=Profile!=MenuCharacter.Get() || (Profile && SkillButtons.Num()!=Profile->Skills.Num());
- if (bRebuild)
- {
-  if (SkillList) { SkillList->RemoveFromParent(); SkillList=nullptr; }
-  SkillButtons.Reset(); MenuCharacter=Profile;
-  auto* Canvas=Cast<UCanvasPanel>(GetWidgetFromName(TEXT("CN_SkillMenu")));
-  auto* Template=Cast<UButton>(GetWidgetFromName(TEXT("BTN_WeakMagic")));
-  if (Profile && Canvas && WidgetTree)
-  {
-   SkillList=WidgetTree->ConstructWidget<UScrollBox>();
-   auto* CanvasSlot=Canvas->AddChildToCanvas(SkillList);
-   CanvasSlot->SetPosition(FVector2D(0,0)); CanvasSlot->SetSize(FVector2D(530,260));
-   for (int32 I=0;I<Profile->Skills.Num();++I)
-   {
-    auto* Button=WidgetTree->ConstructWidget<UCombatMenuEntryButton>();
-    if (Template) { Button->SetStyle(Template->GetStyle()); }
-    Button->SetRenderTransformPivot(FVector2D(.5f,.5f)); Button->SetPixelSnapping(EWidgetPixelSnapping::Disabled);
-    auto* Label=WidgetTree->ConstructWidget<UTextBlock>();
-    FSlateFontInfo Font=GetDefault<UTextBlock>()->GetFont();
-    if (const auto* TemplateLabel=Cast<UTextBlock>(GetWidgetFromName(TEXT("TXT_WeakMagic")))) { Font=TemplateLabel->GetFont(); }
-    Font.Size=17;
-    Label->SetFont(Font); Label->SetAutoWrapText(false);
-    Label->SetVisibility(ESlateVisibility::HitTestInvisible);
-    Button->AddChild(Label); Button->BindEntry(this,I+1);
-    auto* Row=WidgetTree->ConstructWidget<USizeBox>();
-    Row->SetHeightOverride(105); Row->AddChild(Button);
-    auto* ListSlot=Cast<UScrollBoxSlot>(SkillList->AddChild(Row));
-    ListSlot->SetPadding(FMargin(30,9,30,9)); ListSlot->SetHorizontalAlignment(HAlign_Fill);
-    SkillButtons.Add(Button);
-   }
-  }
- }
- for (const TCHAR* Name:{TEXT("BTN_WeakMagic"),TEXT("BTN_StrongMagic")})
- { if (auto* Widget=GetWidgetFromName(Name)) { Widget->SetVisibility(Profile?ESlateVisibility::Collapsed:ESlateVisibility::Visible); } }
- if (!Profile) { return; }
- for (int32 I=0;I<SkillButtons.Num();++I)
- {
-  const UCharacterActionData* Action=Profile->Skills[I].Get(); UCombatMenuEntryButton* Button=SkillButtons[I].Get();
-  Button->SetRenderOpacity(Action && BattleCoordinator->IsActionExhausted(Profile->Skills[I])?.45f:1.f);
-  if (auto* Label=Cast<UTextBlock>(Button->GetContent()); Action && Label)
-  {
-   Label->SetText(FText::FromString(FString::Printf(TEXT("[%d]  %s\n%s · 피해 %.0f"),I+1,*Action->DisplayName.ToString(),*Action->Description.ToString(),Action->BaseDamage)));
-  }
- }
+	UCharacterCombatData* Profile = BattleCoordinator.IsValid() ? BattleCoordinator->GetCharacterActions() : nullptr;
+	if (Profile != MenuCharacter.Get() || (Profile && SkillButtons.Num() != Profile->Skills.Num()))
+	{
+		if (SkillList) { SkillList->RemoveFromParent(); }
+		SkillButtons.Reset();
+		MenuCharacter = Profile;
+		SkillList = Profile ? CreateCommandList(TEXT("CN_SkillMenu")) : nullptr;
+		if (SkillList)
+		{
+			const auto* ButtonTemplate = Cast<UButton>(GetWidgetFromName(TEXT("BTN_WeakMagic")));
+			const auto* LabelTemplate = Cast<UTextBlock>(GetWidgetFromName(TEXT("TXT_WeakMagic")));
+			for (int32 Index = 0; Index < Profile->Skills.Num(); ++Index)
+			{
+				SkillButtons.Add(AddCommandRow(*SkillList, Index + 1, ButtonTemplate, LabelTemplate, false));
+			}
+		}
+	}
+
+	for (const TCHAR* Name : {TEXT("BTN_WeakMagic"), TEXT("BTN_StrongMagic")})
+	{
+		if (UWidget* Widget = GetWidgetFromName(Name))
+		{
+			Widget->SetVisibility(Profile ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+		}
+	}
+	if (!Profile) { return; }
+
+	for (int32 Index = 0; Index < SkillButtons.Num(); ++Index)
+	{
+		UCharacterActionData* Action = Profile->Skills[Index];
+		UCombatMenuEntryButton* Button = SkillButtons[Index];
+		// 소진한 기술도 클릭할 수 있어야 입력 시 사용 불가 효과음을 재생한다.
+		Button->SetRenderOpacity(Action && BattleCoordinator->IsActionExhausted(Action) ? 0.45f : 1.0f);
+		if (auto* Label = Cast<UTextBlock>(Button->GetContent()); Action && Label)
+		{
+			Label->SetText(FText::FromString(FString::Printf(TEXT("[%d]  %s\n%s · 피해 %.0f"),
+				Index + 1, *Action->DisplayName.ToString(), *Action->Description.ToString(), Action->BaseDamage)));
+		}
+	}
 }
 
 void UCombatHUDWidget::RefreshItems()
 {
- const auto Items=BattleCoordinator.IsValid()?BattleCoordinator->GetAvailableItems():TArray<UCombatItemData*>();
- if (!ItemList || ItemButtons.Num()!=Items.Num())
- {
-  if (ItemList) { ItemList->RemoveFromParent();ItemList=nullptr; }
-  ItemButtons.Reset();
-  auto* Canvas=Cast<UCanvasPanel>(GetWidgetFromName(TEXT("CN_ItemMenu")));
-  auto* Template=Cast<UButton>(GetWidgetFromName(TEXT("BTN_Potion")));
-  if (Canvas && WidgetTree)
-  {
-   ItemList=WidgetTree->ConstructWidget<UScrollBox>();auto* CanvasSlot=Canvas->AddChildToCanvas(ItemList);
-   CanvasSlot->SetSize(FVector2D(530,260));
-   for (int32 I=0;I<Items.Num();++I)
-   {
-    auto* Button=WidgetTree->ConstructWidget<UCombatMenuEntryButton>();if (Template) { Button->SetStyle(Template->GetStyle()); }
-    Button->SetRenderTransformPivot(FVector2D(.5f,.5f));Button->SetPixelSnapping(EWidgetPixelSnapping::Disabled);
-    auto* Label=WidgetTree->ConstructWidget<UTextBlock>();
-    FSlateFontInfo Font=GetDefault<UTextBlock>()->GetFont();
-    if (const auto* TemplateLabel=Cast<UTextBlock>(GetWidgetFromName(TEXT("TXT_Potion")))) { Font=TemplateLabel->GetFont(); }
-    Font.Size=17;Label->SetFont(Font);Label->SetAutoWrapText(true);Label->SetVisibility(ESlateVisibility::HitTestInvisible);
-    Button->AddChild(Label);Button->BindEntry(this,I+1);
-    auto* Row=WidgetTree->ConstructWidget<USizeBox>();Row->SetHeightOverride(105);Row->AddChild(Button);
-    auto* ListSlot=Cast<UScrollBoxSlot>(ItemList->AddChild(Row));ListSlot->SetPadding(FMargin(30,9,30,9));ListSlot->SetHorizontalAlignment(HAlign_Fill);
-    ItemButtons.Add(Button);
-   }
-  }
- }
- if (auto* Legacy=GetWidgetFromName(TEXT("BTN_Potion"))) { Legacy->SetVisibility(ESlateVisibility::Collapsed); }
- for (int32 I=0;I<ItemButtons.Num();++I)
- {
-  const auto* Item=Items[I];UCombatMenuEntryButton* Button=ItemButtons[I].Get();
-  Button->SetIsEnabled(BattleCoordinator->CanUseItem(Items[I]));
-  if (auto* Label=Cast<UTextBlock>(Button->GetContent()))
-  { Label->SetText(FText::FromString(FString::Printf(TEXT("[%d]  %s  × %d\nHP %.0f 회복 · 턴 소모"),I+1,*Item->DisplayName.ToString(),BattleCoordinator->GetRemainingItems(Items[I]),Item->HealingAmount))); }
- }
+	const auto Items = BattleCoordinator.IsValid() ? BattleCoordinator->GetAvailableItems() : TArray<UCombatItemData*>();
+	if (!ItemList || ItemButtons.Num() != Items.Num())
+	{
+		if (ItemList) { ItemList->RemoveFromParent(); }
+		ItemButtons.Reset();
+		ItemList = CreateCommandList(TEXT("CN_ItemMenu"));
+		if (ItemList)
+		{
+			const auto* ButtonTemplate = Cast<UButton>(GetWidgetFromName(TEXT("BTN_Potion")));
+			const auto* LabelTemplate = Cast<UTextBlock>(GetWidgetFromName(TEXT("TXT_Potion")));
+			for (int32 Index = 0; Index < Items.Num(); ++Index)
+			{
+				ItemButtons.Add(AddCommandRow(*ItemList, Index + 1, ButtonTemplate, LabelTemplate, true));
+			}
+		}
+	}
+
+	if (UWidget* Legacy = GetWidgetFromName(TEXT("BTN_Potion"))) { Legacy->SetVisibility(ESlateVisibility::Collapsed); }
+	for (int32 Index = 0; Index < ItemButtons.Num(); ++Index)
+	{
+		UCombatItemData* Item = Items[Index];
+		UCombatMenuEntryButton* Button = ItemButtons[Index];
+		Button->SetIsEnabled(BattleCoordinator->CanUseItem(Item));
+		if (auto* Label = Cast<UTextBlock>(Button->GetContent()))
+		{
+			Label->SetText(FText::FromString(FString::Printf(TEXT("[%d]  %s  × %d\nHP %.0f 회복 · 턴 소모"),
+				Index + 1, *Item->DisplayName.ToString(), BattleCoordinator->GetRemainingItems(Item), Item->HealingAmount)));
+		}
+	}
 }
