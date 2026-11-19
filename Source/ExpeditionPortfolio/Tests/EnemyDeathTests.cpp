@@ -6,7 +6,7 @@
 #include "Combat/CombatTargetSelection.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "CoreGlobals.h"
+#include "Tests/BattleTestWorld.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "Misc/AutomationTest.h"
@@ -15,14 +15,15 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/SkeletalMesh.h"
 
+using Expedition::BattleTest::AdvanceBattleTime;
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEnemyDeathLifecycleTest,"ExpeditionPortfolio.Combat.EnemyDeath.Lifecycle",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FEnemyDeathLifecycleTest::RunTest(const FString& Parameters)
 {
 	UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
 	auto* Battle=World->GetSubsystem<UBattleCoordinator>();
 	Battle->bContentFreeTest=true; Battle->TestTurnTransitionDelay=0;
-	auto Advance=[&](float Seconds) { ++GFrameCounter; World->TimeSeconds+=Seconds; World->GetTimerManager().Tick(Seconds); };
-	Advance(0);
+	AdvanceBattleTime(World, 0);
 	auto Stats=[](AActor* Actor)
 	{
 		auto* Health=NewObject<UCombatantComponent>(Actor);Actor->AddInstanceComponent(Health);Health->RegisterComponent();return Health;
@@ -53,8 +54,8 @@ bool FEnemyDeathLifecycleTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("KO removed from target eligibility immediately"),FCombatTargetSelection::IsEligible(Enemy));
 	Presentation->StopPresentation();
 	TestTrue(TEXT("Turn cleanup cannot snap corpse home"),Mesh->GetRelativeTransform().Equals(Impact));
-	Advance(.5f);TestFalse(TEXT("Fallback death interval is not skipped"),Enemy->IsHidden());
-	Advance(.5f);TestTrue(TEXT("Dead enemy disappears after its reaction"),Enemy->IsHidden());
+	AdvanceBattleTime(World, .5f);TestFalse(TEXT("Fallback death interval is not skipped"),Enemy->IsHidden());
+	AdvanceBattleTime(World, .5f);TestTrue(TEXT("Dead enemy disappears after its reaction"),Enemy->IsHidden());
 	TestFalse(TEXT("Retained instance supports retry"),Enemy->IsActorBeingDestroyed());
 	TestFalse(TEXT("Repeated lethal damage cannot restart death"),HP->ApplyDamage(100));
 	FTSTicker::GetCoreTicker().Tick(.01f);
@@ -70,7 +71,7 @@ bool FEnemyDeathLifecycleTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Retry restores pre-approach mesh transform"),Mesh->GetRelativeTransform().Equals(Home));
 	TestFalse(TEXT("Retry clears death state"),Presentation->IsDeathPresentationActive());
 	// Restore before an outstanding disappearance timer expires; stale timers must not hide revived actors.
-	HP->ApplyDamage(100);Advance(.1f);HP->RestoreBattleHealth(50);Advance(2);
+	HP->ApplyDamage(100);AdvanceBattleTime(World, .1f);HP->RestoreBattleHealth(50);AdvanceBattleTime(World, 2);
 	TestFalse(TEXT("Cancelled death timer cannot hide revived enemy"),Enemy->IsHidden());
 	TestFalse(TEXT("Ordinary healing cannot revive dead enemy"),[&] { HP->ApplyDamage(100);return HP->RestoreHealth(10); }());
 	Presentation->ResetDeathPresentation();HP->RestoreBattleHealth(100);
@@ -86,8 +87,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEnemyDeathFadeTest,"ExpeditionPortfolio.Combat
 bool FEnemyDeathFadeTest::RunTest(const FString& Parameters)
 {
 	auto* World=UWorld::CreateWorld(EWorldType::Game,false);
-	auto Advance=[&](float Seconds) { ++GFrameCounter;World->TimeSeconds+=Seconds;World->GetTimerManager().Tick(Seconds); };
-	Advance(0);
+	AdvanceBattleTime(World, 0);
 	auto* Original=UMaterial::GetDefaultMaterial(MD_Surface);
 	auto* MeshAsset=NewObject<USkeletalMesh>(World);MeshAsset->GetMaterials().Add(FSkeletalMaterial(Original));
 	auto* Source=UMaterialInstanceDynamic::Create(Original,World);
@@ -105,7 +105,7 @@ bool FEnemyDeathFadeTest::RunTest(const FString& Parameters)
 		P->HealthHandle=HP->OnHealthChanged().AddUObject(P,&UEnemyAttackPresentationComponent::OnHealthChanged);
 		Presentations.Add(P);Health.Add(HP);HP->ApplyDamage(100);
 	}
-	Advance(1.f);
+	AdvanceBattleTime(World, 1.f);
 	auto* A=Presentations[0];auto* B=Presentations[1];
 	TestTrue(TEXT("Fade starts after death reaction"),A->bDeathFading && B->bDeathFading);
 	if (A->DeathFadeInstances.IsEmpty() || B->DeathFadeInstances.IsEmpty()) { World->DestroyWorld(false);return false; }
@@ -126,7 +126,7 @@ bool FEnemyDeathFadeTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("No fade tick remains on hidden enemy"),B->IsComponentTickEnabled());
 	Health[1]->RestoreBattleHealth(100);
 	TestTrue(TEXT("Hidden enemy restores original material too"),B->Mesh->GetMaterial(0)==Original);
-	Data->DeathFadeDuration=0;Health[0]->ApplyDamage(100);Advance(1.f);
+	Data->DeathFadeDuration=0;Health[0]->ApplyDamage(100);AdvanceBattleTime(World, 1.f);
 	TestTrue(TEXT("Zero duration retains immediate-hide option"),A->GetOwner()->IsHidden());
 	for (int32 Index=0;Index<2;++Index) { Presentations[Index]->ResetDeathPresentation();Health[Index]->OnHealthChanged().Remove(Presentations[Index]->HealthHandle); }
 	World->DestroyWorld(false);return true;

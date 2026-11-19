@@ -22,7 +22,9 @@
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "Misc/AutomationTest.h"
-#include "CoreGlobals.h"
+#include "Tests/BattleTestWorld.h"
+
+using Expedition::BattleTest::AdvanceBattleTime;
 
 namespace
 {
@@ -56,7 +58,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSharedItemRulesTest,"ExpeditionPortfolio.Comba
 bool FSharedItemRulesTest::RunTest(const FString& Parameters)
 {
 	auto* World=UWorld::CreateWorld(EWorldType::Game,false);auto* Battle=World->GetSubsystem<UBattleCoordinator>();Battle->bContentFreeTest=true;
-	auto Advance=[&](float Time) { ++GFrameCounter;World->TimeSeconds+=Time;World->GetTimerManager().Tick(Time); };Advance(0);
+	AdvanceBattleTime(World, 0);
 	auto* Player=World->SpawnActor<APawn>();auto* Enemy=World->SpawnActor<AActor>();auto* Ally=World->SpawnActor<AActor>();
 	auto* PlayerHP=AddStats(Player);auto* EnemyHP=AddStats(Enemy);auto* AllyHP=AddStats(Ally);EnemyHP->EnemyAttackPatterns.Add(NewObject<UEnemyAttackPatternData>());
 	PlayerHP->ApplyDamage(40);AllyHP->ApplyDamage(50);
@@ -75,12 +77,12 @@ bool FSharedItemRulesTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Select item again"),Battle->BeginItemSelection(Item));
 	for (int32 I=0;I<3 && Battle->GetSelectedTarget()!=Ally;++I) { Battle->MoveTargetSelection(1); }
 	TestTrue(TEXT("Confirm ally use"),Battle->ConfirmTargetSelection());TestFalse(TEXT("Duplicate confirmation rejected"),Battle->ConfirmTargetSelection());
-	Advance(.48f);TestEqual(TEXT("Shared item definition controls healing"),AllyHP->GetCurrentHealth(),62.f);TestEqual(TEXT("One shared item consumed"),Battle->GetRemainingItems(Item),1);
-	Advance(1.01f);Advance(.61f);
+	AdvanceBattleTime(World, .48f);TestEqual(TEXT("Shared item definition controls healing"),AllyHP->GetCurrentHealth(),62.f);TestEqual(TEXT("One shared item consumed"),Battle->GetRemainingItems(Item),1);
+	AdvanceBattleTime(World, 1.01f);AdvanceBattleTime(World, .61f);
 	TestTrue(TEXT("Same shared item available for self"),Battle->BeginItemSelection(Item));
 	for (int32 I=0;I<3 && Battle->GetSelectedTarget()!=Player;++I) { Battle->MoveTargetSelection(1); }
-	Battle->ConfirmTargetSelection();Advance(.48f);TestEqual(TEXT("Different recipient consumes the same pool"),Battle->GetRemainingItems(Item),0);
-	Advance(1.01f);Advance(.61f);TestFalse(TEXT("Empty common stock cannot be used"),Battle->CanUseItem(Item));
+	Battle->ConfirmTargetSelection();AdvanceBattleTime(World, .48f);TestEqual(TEXT("Different recipient consumes the same pool"),Battle->GetRemainingItems(Item),0);
+	AdvanceBattleTime(World, 1.01f);AdvanceBattleTime(World, .61f);TestFalse(TEXT("Empty common stock cannot be used"),Battle->CanUseItem(Item));
 	PlayerHP->ApplyDamage(999);Battle->TryFinishBattle();TestTrue(TEXT("Retry succeeds"),Battle->RetryBattle());
 	TestEqual(TEXT("Retry restores entry item pool"),Battle->GetRemainingItems(Item),2);
 	TestEqual(TEXT("Retry restores actor's entry HP"),PlayerHP->GetCurrentHealth(),60.f);

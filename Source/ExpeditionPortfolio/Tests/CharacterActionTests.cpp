@@ -10,7 +10,9 @@
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "Misc/AutomationTest.h"
-#include "CoreGlobals.h"
+#include "Tests/BattleTestWorld.h"
+
+using Expedition::BattleTest::AdvanceBattleTime;
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCharacterActionRulesTest,"ExpeditionPortfolio.Combat.CharacterActions.Rules",
  EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
@@ -30,8 +32,7 @@ bool FCharacterActionRulesTest::RunTest(const FString& Parameters)
  Profile->Skills={First,Second}; Profile->ParryCounter=Action(TEXT("Counter"),15,0);
  TestTrue(TEXT("Character action set valid"),Profile->IsValidConfiguration());
  TestTrue(TEXT("Encounter starts"),Battle->RequestBattleStart(World->SpawnActor<AActor>(),Player,Enemy));
- auto Advance=[&](float Time) { ++GFrameCounter; World->TimeSeconds+=Time; World->GetTimerManager().Tick(Time); };
- Advance(0);
+ AdvanceBattleTime(World, 0);
  TestFalse(TEXT("Foreign action cannot enter target selection"),Battle->BeginActionSelection(Action(TEXT("Foreign"),99,0)));
  TestTrue(TEXT("Arbitrary skill enters target selection"),Battle->BeginActionSelection(Second));
  TestFalse(TEXT("Repeated request while selecting rejected"),Battle->RequestPlayerAction(Second));
@@ -42,12 +43,12 @@ bool FCharacterActionRulesTest::RunTest(const FString& Parameters)
  TestEqual(TEXT("Used skill exhausted"),Battle->GetRemainingActionUses(First),0);
  TestEqual(TEXT("Other limited skill remains available"),Battle->GetRemainingActionUses(Second),1);
  TestFalse(TEXT("Repeated action during enemy turn rejected"),Battle->RequestPlayerAction(Second));
- Advance(1.01f); Advance(1.01f); Advance(.61f); Advance(1.01f);
+ AdvanceBattleTime(World, 1.01f); AdvanceBattleTime(World, 1.01f); AdvanceBattleTime(World, .61f); AdvanceBattleTime(World, 1.01f);
  TestEqual(TEXT("Enemy turn returns to command"),Battle->GetCurrentState(),EBattleState::PlayerCommand);
  TestFalse(TEXT("Exhausted skill rejected"),Battle->RequestPlayerAction(First));
  TestTrue(TEXT("Independent limited skill accepted"),Battle->RequestPlayerAction(Second));
  TestEqual(TEXT("Second skill damage independent"),EnemyHP->GetCurrentHealth(),76.f);
- Advance(1.01f); Advance(1.01f); Advance(.61f); Advance(1.01f);
+ AdvanceBattleTime(World, 1.01f); AdvanceBattleTime(World, 1.01f); AdvanceBattleTime(World, .61f); AdvanceBattleTime(World, 1.01f);
  // Observer edits cannot change already accepted damage, even at the state-change boundary.
  auto Handle=Battle->OnBattleStateChanged().AddLambda([&](EBattleState Before,EBattleState After)
  { if (After==EBattleState::PlayerAction) { Profile->BasicAttack->BaseDamage=99; } });

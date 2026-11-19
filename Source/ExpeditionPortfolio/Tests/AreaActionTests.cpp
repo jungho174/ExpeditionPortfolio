@@ -3,24 +3,26 @@
 #include "Combat/CharacterCombatData.h"
 #include "Combat/CombatantComponent.h"
 #include "Combat/ActionQTESubsystem.h"
-#include "CoreGlobals.h"
+#include "Tests/BattleTestWorld.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "Misc/AutomationTest.h"
+
+using Expedition::BattleTest::FScopedBattleTestWorld;
+using Expedition::BattleTest::AddCombatantComponent;
+using Expedition::BattleTest::AdvanceBattleTime;
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAreaActionRulesTest,"ExpeditionPortfolio.Combat.Targeting.AreaActions",EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FAreaActionRulesTest::RunTest(const FString& Parameters)
 {
 	for (int32 Case=0;Case<8;++Case)
 	{
-		auto* World=UWorld::CreateWorld(EWorldType::Game,false);
-		auto* Battle=World->GetSubsystem<UBattleCoordinator>();Battle->bContentFreeTest=true;Battle->TestTurnTransitionDelay=0;
-		auto Advance=[&](float Seconds) { ++GFrameCounter;World->TimeSeconds+=Seconds;World->GetTimerManager().Tick(Seconds); };
-		Advance(0);
-		auto Stats=[](AActor* Owner) { auto* HP=NewObject<UCombatantComponent>(Owner);Owner->AddInstanceComponent(HP);HP->RegisterComponent();HP->EnemyAttackPatterns.Add(NewObject<UEnemyAttackPatternData>(Owner));return HP; };
+		FScopedBattleTestWorld TestWorld;
+		UWorld* World = TestWorld.GetWorld();
+		UBattleCoordinator* Battle = TestWorld.GetCoordinator();
 		auto* Player=World->SpawnActor<APawn>();auto* Ally=World->SpawnActor<APawn>();
 		auto* Enemy1=World->SpawnActor<AActor>();auto* Enemy2=World->SpawnActor<AActor>();auto* Dead=World->SpawnActor<AActor>();auto* Outsider=World->SpawnActor<AActor>();
-		auto* PlayerHP=Stats(Player);auto* AllyHP=Stats(Ally);auto* HP1=Stats(Enemy1);auto* HP2=Stats(Enemy2);auto* DeadHP=Stats(Dead);auto* OutsideHP=Stats(Outsider);
+		auto* PlayerHP=AddCombatantComponent(Player);auto* AllyHP=AddCombatantComponent(Ally);auto* HP1=AddCombatantComponent(Enemy1);auto* HP2=AddCombatantComponent(Enemy2);auto* DeadHP=AddCombatantComponent(Dead);auto* OutsideHP=AddCombatantComponent(Outsider);
 		DeadHP->ApplyDamage(100);
 		auto* Profile=NewObject<UCharacterCombatData>();Profile->CharacterId=TEXT("AreaHero");PlayerHP->CharacterActions=Profile;
 		auto Action=[](FName Id) { auto* Value=NewObject<UCharacterActionData>();Value->ActionId=Id;Value->BaseDamage=30;return Value; };
@@ -51,7 +53,7 @@ bool FAreaActionRulesTest::RunTest(const FString& Parameters)
 				{ if (After==EBattleState::PlayerAction) { Area->TargetScope=ECharacterActionTargetScope::SingleEnemy;Area->BaseDamage=99; } });
 			}
 			TestTrue(TEXT("Area confirmed"),Battle->ConfirmTargetSelection());
-			TestFalse(TEXT("Double confirmation rejected"),Battle->ConfirmTargetSelection());Advance(.5f);
+			TestFalse(TEXT("Double confirmation rejected"),Battle->ConfirmTargetSelection());AdvanceBattleTime(World, .5f);
 			TestEqual(TEXT("One number per living enemy"),Numbers,2);
 			TestFalse(TEXT("Hit delegate cannot reenter batch"),Reentered);
 			TestFalse(TEXT("No partial-batch victory"),FinishedTooEarly);
@@ -105,7 +107,6 @@ bool FAreaActionRulesTest::RunTest(const FString& Parameters)
 				TestEqual(TEXT("Other ally gets next turn exactly once"),Battle->GetActingCombatant(),static_cast<AActor*>(Ally));
 			}
 		}
-		World->DestroyWorld(false);
 	}
 	return true;
 }
