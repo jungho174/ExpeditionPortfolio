@@ -11,8 +11,6 @@
 #include "NiagaraFunctionLibrary.h"
 #include "Sound/SoundBase.h"
 #include "TimerManager.h"
-#include "Materials/MaterialInterface.h"
-#include "Materials/MaterialInstanceDynamic.h"
 
 UEnemyAttackPresentationComponent::UEnemyAttackPresentationComponent()
 {
@@ -35,7 +33,7 @@ float UEnemyAttackPresentationComponent::GetExpectedDuration(UAnimMontage* Monta
 }
 bool UEnemyAttackPresentationComponent::BeginAttack(UAnimMontage* Montage,const int64 ActionId,AActor* Target)
 {
-	if (bDeathActive || (Combatant.IsValid() && Combatant->IsDefeated())) { return false; }
+	if (Death.IsActive() || (Combatant.IsValid() && Combatant->IsDefeated())) { return false; }
 	StopPresentation();
 	bTravelBlocked=false;
 	Mesh=GetOwner()->FindComponentByClass<USkeletalMeshComponent>();
@@ -98,7 +96,7 @@ void UEnemyAttackPresentationComponent::StartTravel(const bool bReturn)
 void UEnemyAttackPresentationComponent::TickComponent(float DeltaTime,ELevelTick TickType,FActorComponentTickFunction* TickFunction)
 {
 	Super::TickComponent(DeltaTime,TickType,TickFunction);
-	if (bDeathFading) { UpdateDeathFade(DeltaTime); return; }
+	if (Death.IsFading()) { UpdateDeathFade(DeltaTime); return; }
 	if (!ActiveId || !Mesh.IsValid() || !bTravel) { Finish(true); return; }
 	TravelElapsed+=DeltaTime;
 	const float Alpha=FMath::Clamp(TravelElapsed/TravelDuration,0.f,1.f);
@@ -134,7 +132,7 @@ void UEnemyAttackPresentationComponent::Finish(const bool bInterrupted)
 }
 void UEnemyAttackPresentationComponent::StopPresentation()
 {
-	ActiveId=0; bTravel=false; bHeldForCounter=false; SetComponentTickEnabled(bDeathFading);
+	ActiveId=0; bTravel=false; bHeldForCounter=false; SetComponentTickEnabled(Death.IsFading());
 	if (Mesh.IsValid() && Mesh->GetAnimInstance() && ActiveMontage)
 	{
 		FOnMontageEnded Empty; FOnMontageBlendingOutStarted EmptyBlend;
@@ -142,7 +140,7 @@ void UEnemyAttackPresentationComponent::StopPresentation()
 		Mesh->GetAnimInstance()->Montage_SetBlendingOutDelegate(EmptyBlend,ActiveMontage);
 		Mesh->GetAnimInstance()->Montage_Stop(.1f,ActiveMontage);
 	}
-	if (!bDeathActive)
+	if (!Death.IsActive())
 	{
 		if (bSavedTransform && Mesh.IsValid()) { Mesh->SetRelativeTransform(OriginalTransform); }
 		bSavedTransform=false;
@@ -179,7 +177,7 @@ bool UEnemyAttackPresentationComponent::ReturnAfterCounter()
 }
 void UEnemyAttackPresentationComponent::OnHealthChanged(float Before,float After)
 {
-	if (After>0 && bDeathActive) { ResetDeathPresentation(); }
+	if (After>0 && Death.IsActive()) { ResetDeathPresentation(); }
 	if (After>=Before) { return; }
 	if (After<=0) { BeginDeathPresentation(); return; }
 	if (!PresentationData || !Mesh.IsValid() || !Mesh->GetAnimInstance()) { return; }
@@ -192,120 +190,42 @@ void UEnemyAttackPresentationComponent::OnHealthChanged(float Before,float After
 
 void UEnemyAttackPresentationComponent::BeginDeathPresentation()
 {
-	if (bDeathActive || !GetOwner() || !GetWorld()) { return; }
-	bDeathActive=true;
-	bWasHiddenBeforeDeath=GetOwner()->IsHidden();
-	bCollisionBeforeDeath=GetOwner()->GetActorEnableCollision();
-	GetOwner()->SetActorEnableCollision(false);
-	if (Mesh.IsValid() && !bSavedTransform) { OriginalTransform=Mesh->GetRelativeTransform(); bSavedTransform=true; }
-	// Cancel attack callbacks while keeping the mesh at the killing-blow location.
+	if (Death.IsActive() || !GetOwner() || !GetWorld()) { return; }
+	Death.Capture(*GetOwner());
+	if (Mesh.IsValid() && !bSavedTransform) { OriginalTransform = Mesh->GetRelativeTransform(); bSavedTransform = true; }
+	// 공격 콜백을 끊되 적이 쓰러진 위치는 복원 시점까지 유지한다.
 	StopPresentation();
-	const auto Duration=[](float Value,float Fallback,float Min,float Max)
-	{ return FMath::IsFinite(Value)?FMath::Clamp(Value,Min,Max):Fallback; };
-	float Lifetime=Duration(PresentationData?PresentationData->DeathFallbackDuration:.75f,.75f,.05f,30.f);
-	DeathMontage=PresentationData?PresentationData->Death.Get():nullptr;
-	if (Mesh.IsValid() && Mesh->GetAnimInstance())
-	{
-		auto* Anim=Mesh->GetAnimInstance();
-		Anim->StopAllMontages(.05f);
-		if (DeathMontage)
-		{
-			const float Rate=Duration(PresentationData->DeathPlayRate,1.f,.05f,10.f);
-			const float Played=Anim->Montage_Play(DeathMontage,Rate,EMontagePlayReturnType::Duration);
-			if (Played>0 && FMath::IsFinite(Played))
-			{
-				Lifetime=Played;
-				// Set only this instance: never change the shared montage asset at runtime.
-				if (auto* Instance=Anim->GetActiveInstanceForMontage(DeathMontage)) { Instance->bEnableAutoBlendOut=false; }
-			}
-		}
-	}
-	Lifetime+=Duration(PresentationData?PresentationData->DeathDisappearDelay:.2f,.2f,0.f,30.f);
-	if (PresentationData)
-	{
-		const auto& Sound=PresentationData->DeathSound;
-		CombatSoundPlayback::Play(GetOwner(),Sound.Sound,Mesh.IsValid()?Mesh->GetComponentLocation():GetOwner()->GetActorLocation(),Sound.Volume,Sound.Delay,Sound.StartTime);
-	}
-	GetWorld()->GetTimerManager().SetTimer(DeathTimer,this,&ThisClass::BeginDeathFade,Lifetime,false);
-	UE_LOG(LogTemp,Log,TEXT("Enemy death started: Actor=%s Montage=%s FadeStartsAfter=%.2f"),*GetNameSafe(GetOwner()),*GetNameSafe(DeathMontage),Lifetime);
+	const float Lifetime = Death.PlayDeathPose(*GetOwner(), Mesh.Get(), PresentationData);
+	GetWorld()->GetTimerManager().SetTimer(DeathTimer, this, &ThisClass::BeginDeathFade, Lifetime, false);
 }
 
 void UEnemyAttackPresentationComponent::BeginDeathFade()
 {
-	if (!bDeathActive || (Combatant.IsValid() && !Combatant->IsDefeated())) { return; }
-	const float Config=PresentationData?PresentationData->DeathFadeDuration:0;
-	DeathFadeDuration=FMath::IsFinite(Config)?FMath::Clamp(Config,0.f,30.f):.8f;
-	DeathFadeParameter=PresentationData?PresentationData->DeathFadeParameter:NAME_None;
-	if (DeathFadeDuration<=0 || !Mesh.IsValid() || Mesh->GetNumMaterials()==0 || DeathFadeParameter.IsNone()) { FinishDeathPresentation(); return; }
-	TArray<UMaterialInterface*> Sources;
-	for (int32 Index=0;Index<Mesh->GetNumMaterials();++Index)
-	{
-		UMaterialInterface* Material=PresentationData->DeathFadeMaterials.IsValidIndex(Index) && PresentationData->DeathFadeMaterials[Index]
-			? PresentationData->DeathFadeMaterials[Index].Get() : Mesh->GetMaterial(Index);
-		float Value=1;
-		if (!Material || !Material->GetScalarParameterValue(FMaterialParameterInfo(DeathFadeParameter),Value))
-		{
-			UE_LOG(LogTemp,Warning,TEXT("Enemy death fade unavailable: Actor=%s Slot=%d Parameter=%s. Configure a fade material in the enemy presentation DA."),*GetNameSafe(GetOwner()),Index,*DeathFadeParameter.ToString());
-			FinishDeathPresentation(); return;
-		}
-		Sources.Add(Material);
-	}
-	SavedDeathMaterials.Reset();DeathFadeInstances.Reset();
-	for (int32 Index=0;Index<Sources.Num();++Index)
-	{
-		SavedDeathMaterials.Add(Mesh->GetMaterial(Index));
-		auto* Instance=UMaterialInstanceDynamic::Create(Sources[Index],this);
-		if (!Instance) { RestoreDeathMaterials();FinishDeathPresentation();return; }
-		Instance->SetScalarParameterValue(DeathFadeParameter,1.f);
-		DeathFadeInstances.Add(Instance);Mesh->SetMaterial(Index,Instance);
-	}
-	DeathFadeElapsed=0;bDeathFading=true;SetComponentTickEnabled(true);
-	UE_LOG(LogTemp,Log,TEXT("Enemy death fade started: Actor=%s Duration=%.2f"),*GetNameSafe(GetOwner()),DeathFadeDuration);
+	if (!Death.IsActive() || (Combatant.IsValid() && !Combatant->IsDefeated())) { return; }
+	if (Death.BeginFade(Mesh.Get(), PresentationData)) { SetComponentTickEnabled(true); }
+	else { FinishDeathPresentation(); }
 }
 
 void UEnemyAttackPresentationComponent::UpdateDeathFade(float DeltaTime)
 {
-	if (!bDeathFading) { return; }
-	DeathFadeElapsed+=FMath::Max(0.f,DeltaTime);
-	const float Alpha=FMath::Clamp(DeathFadeElapsed/DeathFadeDuration,0.f,1.f);
-	const float Opacity=1-Alpha*Alpha*(3-2*Alpha);
-	for (UMaterialInstanceDynamic* Instance:DeathFadeInstances) { if (Instance) { Instance->SetScalarParameterValue(DeathFadeParameter,Opacity); } }
-	if (Alpha>=1) { FinishDeathPresentation(); }
-}
-
-void UEnemyAttackPresentationComponent::RestoreDeathMaterials()
-{
-	if (Mesh.IsValid())
-	{
-		for (int32 Index=0;Index<SavedDeathMaterials.Num();++Index) { Mesh->SetMaterial(Index,SavedDeathMaterials[Index]); }
-	}
-	SavedDeathMaterials.Reset();DeathFadeInstances.Reset();
+	if (Death.AdvanceFade(DeltaTime)) { FinishDeathPresentation(); }
 }
 
 void UEnemyAttackPresentationComponent::FinishDeathPresentation()
 {
-	if (!bDeathActive || !GetOwner() || (Combatant.IsValid() && !Combatant->IsDefeated())) { return; }
-	bDeathFading=false;SetComponentTickEnabled(false);
-	// Keep the instance for entry-HP restoration on retry/retreat; victory Continue destroys it.
-	GetOwner()->SetActorHiddenInGame(true);
-	UE_LOG(LogTemp,Log,TEXT("Enemy disappeared: Actor=%s"),*GetNameSafe(GetOwner()));
+	if (!Death.IsActive() || !GetOwner() || (Combatant.IsValid() && !Combatant->IsDefeated())) { return; }
+	Death.Hide(*GetOwner());
+	SetComponentTickEnabled(false);
 }
 
 void UEnemyAttackPresentationComponent::ResetDeathPresentation()
 {
 	if (GetWorld()) { GetWorld()->GetTimerManager().ClearTimer(DeathTimer); }
-	if (!bDeathActive) { return; }
-	bDeathFading=false;RestoreDeathMaterials();
-	if (Mesh.IsValid() && Mesh->GetAnimInstance() && DeathMontage) { Mesh->GetAnimInstance()->Montage_Stop(0.f,DeathMontage); }
-	DeathMontage=nullptr;
-	bDeathActive=false;
+	if (!Death.IsActive()) { return; }
+	Death.Restore(GetOwner(), Mesh.Get());
 	StopPresentation();
-	if (GetOwner())
-	{
-		GetOwner()->SetActorHiddenInGame(bWasHiddenBeforeDeath);
-		GetOwner()->SetActorEnableCollision(bCollisionBeforeDeath);
-	}
 }
+
 void UEnemyAttackPresentationComponent::PlayHitFeedback(const FEnemyAttackHit& Hit,const EBattleDefenseResult Result)
 {
 	if (Result==EBattleDefenseResult::DodgeSuccess || Result==EBattleDefenseResult::ParrySuccess) { return; }

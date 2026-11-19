@@ -107,15 +107,20 @@ bool FEnemyDeathFadeTest::RunTest(const FString& Parameters)
 	}
 	AdvanceBattleTime(World, 1.f);
 	auto* A=Presentations[0];auto* B=Presentations[1];
-	TestTrue(TEXT("Fade starts after death reaction"),A->bDeathFading && B->bDeathFading);
-	if (A->DeathFadeInstances.IsEmpty() || B->DeathFadeInstances.IsEmpty()) { World->DestroyWorld(false);return false; }
-	TestTrue(TEXT("Each enemy gets a separate fade instance"),A->DeathFadeInstances[0]!=B->DeathFadeInstances[0]);
+	TestTrue(TEXT("Fade starts after death reaction"),A->Death.IsFading() && B->Death.IsFading());
+	auto* FadeA = Cast<UMaterialInstanceDynamic>(A->Mesh->GetMaterial(0));
+	auto* FadeB = Cast<UMaterialInstanceDynamic>(B->Mesh->GetMaterial(0));
+	if (!TestNotNull(TEXT("First enemy fade material"), FadeA) || !TestNotNull(TEXT("Second enemy fade material"), FadeB))
+	{
+		World->DestroyWorld(false); return false;
+	}
+	TestTrue(TEXT("Each enemy gets a separate fade instance"), FadeA != FadeB);
 	A->UpdateDeathFade(.4f);
-	float Opacity=0;A->DeathFadeInstances[0]->GetScalarParameterValue(FMaterialParameterInfo(TEXT("DeathOpacity")),Opacity);
+	float Opacity=0;FadeA->GetScalarParameterValue(FMaterialParameterInfo(TEXT("DeathOpacity")),Opacity);
 	TestTrue(TEXT("Fade has a visible intermediate value"),FMath::IsNearlyEqual(Opacity,.5f));
 	Source->GetScalarParameterValue(FMaterialParameterInfo(TEXT("DeathOpacity")),Opacity);
 	TestEqual(TEXT("Shared material is never modified"),Opacity,1.f);
-	B->DeathFadeInstances[0]->GetScalarParameterValue(FMaterialParameterInfo(TEXT("DeathOpacity")),Opacity);
+	FadeB->GetScalarParameterValue(FMaterialParameterInfo(TEXT("DeathOpacity")),Opacity);
 	TestEqual(TEXT("Other enemy opacity is independent"),Opacity,1.f);
 	A->StopPresentation();TestTrue(TEXT("Turn cleanup does not cancel active fade"),A->IsComponentTickEnabled());
 	Health[0]->RestoreBattleHealth(100);

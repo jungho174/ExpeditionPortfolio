@@ -4,13 +4,13 @@
 #include "Components/ActorComponent.h"
 #include "Combat/EnemyAttackPatternData.h"
 #include "Combat/BattleDefense.h"
+#include "UI/EnemyDeathPresentation.h"
 #include "EnemyAttackPresentationComponent.generated.h"
 
 class UAnimMontage;
 class USkeletalMeshComponent;
 class UEnemyPresentationData;
 class UCombatantComponent;
-class UMaterialInterface;
 
 UCLASS(ClassGroup = (Combat), meta = (BlueprintSpawnableComponent))
 class EXPEDITIONPORTFOLIO_API UEnemyAttackPresentationComponent : public UActorComponent
@@ -29,7 +29,7 @@ public:
 	bool WasTravelBlocked() const { return bTravelBlocked; }
 	void StopPresentation();
 	void HandleHitNotify(USkeletalMeshComponent* SourceMesh, int32 MontageInstanceId, int32 HitIndex);
-	UFUNCTION(BlueprintPure,Category="Combat|Presentation") bool IsDeathPresentationActive() const { return bDeathActive; }
+	UFUNCTION(BlueprintPure,Category="Combat|Presentation") bool IsDeathPresentationActive() const { return Death.IsActive(); }
 protected:
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime,ELevelTick TickType,FActorComponentTickFunction* TickFunction) override;
@@ -42,17 +42,10 @@ private:
 	void BeginDeathPresentation();
 	void BeginDeathFade();
 	void UpdateDeathFade(float DeltaTime);
-	void RestoreDeathMaterials();
-	UPROPERTY(Transient) TArray<TObjectPtr<UMaterialInterface>> SavedDeathMaterials;
-	UPROPERTY(Transient) TArray<TObjectPtr<class UMaterialInstanceDynamic>> DeathFadeInstances;
-	float DeathFadeElapsed=0, DeathFadeDuration=0;
-	FName DeathFadeParameter;
-	bool bDeathFading=false;
 	void FinishDeathPresentation();
 	void ResetDeathPresentation();
-	UPROPERTY(Transient) TObjectPtr<UAnimMontage> DeathMontage;
+	UPROPERTY(Transient) FEnemyDeathPresentation Death;
 	FTimerHandle DeathTimer;
-	bool bDeathActive=false, bWasHiddenBeforeDeath=false, bCollisionBeforeDeath=false;
 	bool StartStrike();
 	void OnHealthChanged(float Before,float After);
 	void OnMontageBlendingOut(UAnimMontage* Montage,bool bInterrupted,int64 ExpectedId);
