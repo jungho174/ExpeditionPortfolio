@@ -7,7 +7,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "GameFramework/WorldSettings.h"
+#include "UI/BattleSlowMotionSubsystem.h"
 #include "Camera/PlayerCameraManager.h"
 #include "HAL/PlatformTime.h"
 #include "Combat/BattleCoordinator.h"
@@ -201,8 +201,7 @@ bool UBattlePresentationComponent::BeginParryFeedback(int64 ActionId, bool bComp
  if (Controller->PlayerCameraManager && Style.CameraShake) { ParryShake=Controller->PlayerCameraManager->StartCameraShake(Style.CameraShake,Style.CameraShakeScale); }
  UE_LOG(LogBattleCoordinator,Log,TEXT("Shared parry feedback: Complete=%d Duration=%.3f Sound=%s"),bComplete,Duration,*GetNameSafe(Style.Sound.Sound));
  if (Duration<=0) { return false; }
- SlowWorld=GetWorld()->GetWorldSettings(); PreviousParryDilation=SlowWorld->TimeDilation;
- SlowWorld->SetTimeDilation(PreviousParryDilation*Factor);
+ ParrySlowId = GetWorld()->GetSubsystem<UBattleSlowMotionSubsystem>()->Begin(EBattleSlowMotion::Parry, Factor);
  const double EndsAt=FPlatformTime::Seconds()+Duration;
  ParryTicker=FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this,[this,EndsAt,ActionId,bComplete](float)
  {
@@ -216,7 +215,11 @@ bool UBattlePresentationComponent::BeginParryFeedback(int64 ActionId, bool bComp
 void UBattlePresentationComponent::ReleaseParryFeedback()
 {
  if (ParryTicker.IsValid()) { FTSTicker::GetCoreTicker().RemoveTicker(ParryTicker); ParryTicker.Reset(); }
- if (SlowWorld.IsValid()) { SlowWorld->SetTimeDilation(PreviousParryDilation); SlowWorld.Reset(); }
+ if (ParrySlowId && GetWorld())
+ {
+  if (auto* Slow = GetWorld()->GetSubsystem<UBattleSlowMotionSubsystem>()) { Slow->End(ParrySlowId); }
+ }
+ ParrySlowId = 0;
  if (IsValid(ParryFX)) { ParryFX->DestroyComponent(); } ParryFX=nullptr;
  if (Controller.IsValid() && Controller->PlayerCameraManager && ParryShake) { Controller->PlayerCameraManager->StopCameraShake(ParryShake,true); }
  ParryShake=nullptr;

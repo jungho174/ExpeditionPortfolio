@@ -12,7 +12,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "CoreGlobals.h"
 #include "Containers/Ticker.h"
-#include "GameFramework/WorldSettings.h"
+#include "UI/BattleSlowMotionSubsystem.h"
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Kismet/GameplayStatics.h"
@@ -91,9 +91,7 @@ bool UMagicPresentationComponent::BeginCounterAction(const int64 ActionId, AActo
 	TargetActor = Target;
 	bCounterAction = true;
 	bImpactHolding = true;
-	ImpactWorldSettings = GetWorld()->GetWorldSettings();
-	PreviousTimeDilation = ImpactWorldSettings->TimeDilation;
-	ImpactWorldSettings->SetTimeDilation(PreviousTimeDilation * CounterMagic->ParrySlowFactor);
+	ImpactSlowId = GetWorld()->GetSubsystem<UBattleSlowMotionSubsystem>()->Begin(EBattleSlowMotion::Parry, CounterMagic->ParrySlowFactor);
 	ImpactEndsAt = FPlatformTime::Seconds() + CounterMagic->ParrySlowDuration;
 	const FVector Location = Mesh->GetSocketLocation(CounterMagic->CastSocket);
 	if (CounterMagic->ParryImpactEffect)
@@ -142,10 +140,13 @@ bool UMagicPresentationComponent::UpdateCounterImpact(const double RealTime)
 void UMagicPresentationComponent::RestoreCounterImpact()
 {
 	if (ImpactTicker.IsValid()) { FTSTicker::GetCoreTicker().RemoveTicker(ImpactTicker); ImpactTicker.Reset(); }
-	if (bImpactHolding && ImpactWorldSettings.IsValid()) { ImpactWorldSettings->SetTimeDilation(PreviousTimeDilation); }
+	if (ImpactSlowId && GetWorld())
+	{
+		if (auto* Slow = GetWorld()->GetSubsystem<UBattleSlowMotionSubsystem>()) { Slow->End(ImpactSlowId); }
+	}
+	ImpactSlowId = 0;
 	if (bImpactHolding) { UE_LOG(LogBattleCoordinator, Log, TEXT("Parry impact slow motion restored")); }
 	bImpactHolding = false;
-	ImpactWorldSettings.Reset();
 	if (IsValid(ParryImpactFX)) { ParryImpactFX->DestroyComponent(); }
 	ParryImpactFX = nullptr;
 	if (ImpactCamera.IsValid() && ImpactShake) { ImpactCamera->StopCameraShake(ImpactShake, true); }

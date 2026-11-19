@@ -1,13 +1,11 @@
 #include "UI/BattleResultPresentationComponent.h"
 #include "UI/BattleResultPresentationData.h"
 #include "UI/BattleResultWidget.h"
-#include "UI/MagicPresentationComponent.h"
 #include "UI/BattlePresentationComponent.h"
 #include "Combat/ParryCounterProvider.h"
-#include "UI/DefensePresentationComponent.h"
 #include "Combat/BattleCoordinator.h"
 #include "GameFramework/PlayerController.h"
-#include "GameFramework/WorldSettings.h"
+#include "UI/BattleSlowMotionSubsystem.h"
 #include "Engine/World.h"
 #include "HAL/PlatformTime.h"
 #include "Kismet/GameplayStatics.h"
@@ -39,13 +37,11 @@ void UBattleResultPresentationComponent::HandleState(EBattleState Before,EBattle
 		{
 			if (Component->GetClass()->ImplementsInterface(UParryCounterProvider::StaticClass())) { IParryCounterProvider::Execute_ReleaseCounterImpact(Component); }
 		}
-		if (auto* Defense=Player->FindComponentByClass<UDefensePresentationComponent>()) { Defense->ReleaseImpactForBattleResult(); }
 	}
 	if (auto* Presentation=GetOwner()->FindComponentByClass<UBattlePresentationComponent>()) { Presentation->ReleaseParryFeedback(); }
-	PreviousDilation=GetWorld()->GetWorldSettings()->TimeDilation;
 	const float Factor=FMath::IsFinite(PresentationData->SlowFactor)?FMath::Clamp(PresentationData->SlowFactor,.01f,1.f):.15f;
 	const float Duration=FMath::IsFinite(PresentationData->SlowDuration)?FMath::Clamp(PresentationData->SlowDuration,0.f,10.f):3.f;
-	GetWorld()->GetWorldSettings()->SetTimeDilation(PreviousDilation*Factor);
+	ResultSlowId = GetWorld()->GetSubsystem<UBattleSlowMotionSubsystem>()->Begin(EBattleSlowMotion::Result, Factor);
 	SlowEndsAt=FPlatformTime::Seconds()+Duration;
 	SlowTicker=FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this,[this](float)
 	{
@@ -82,7 +78,11 @@ void UBattleResultPresentationComponent::RestoreWorld()
 	if (SlowTicker.IsValid()) { FTSTicker::GetCoreTicker().RemoveTicker(SlowTicker); SlowTicker.Reset(); }
 	if (bPausedByResult && Controller.IsValid()) { Controller->SetPause(false); }
 	bPausedByResult=false;
-	if (bActive && GetWorld()) { GetWorld()->GetWorldSettings()->SetTimeDilation(PreviousDilation); }
+	if (ResultSlowId && GetWorld())
+	{
+		if (auto* Slow = GetWorld()->GetSubsystem<UBattleSlowMotionSubsystem>()) { Slow->End(ResultSlowId); }
+	}
+	ResultSlowId = 0;
 	bActive=false;
 	if (Widget) { Widget->RemoveFromParent(); Widget=nullptr; }
 	if (Controller.IsValid())

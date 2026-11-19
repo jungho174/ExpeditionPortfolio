@@ -16,7 +16,6 @@ class UAnimInstance;
 class USkeletalMeshComponent;
 class UNiagaraComponent;
 class UNiagaraSystem;
-class AWorldSettings;
 class APlayerCameraManager;
 class UCameraShakeBase;
 
@@ -105,10 +104,9 @@ private:
 	bool bCharging = false;
 	bool bCounterAction = false;
 	bool bImpactHolding = false;
-	float PreviousTimeDilation = 1.0f;
+	uint64 ImpactSlowId = 0;
 	double ImpactEndsAt = 0;
 	FTSTicker::FDelegateHandle ImpactTicker;
-	TWeakObjectPtr<AWorldSettings> ImpactWorldSettings;
 	TWeakObjectPtr<APlayerCameraManager> ImpactCamera;
 	UPROPERTY(Transient) TObjectPtr<UNiagaraComponent> ParryImpactFX;
 	UPROPERTY(Transient) TObjectPtr<UCameraShakeBase> ImpactShake;

@@ -11,6 +11,7 @@
 #include "GameFramework/WorldSettings.h"
 #include "Misc/AutomationTest.h"
 #include "Tests/BattleTestWorld.h"
+#include "UI/BattleSlowMotionSubsystem.h"
 #include "UI/MagicActionData.h"
 #include "UI/MagicPresentationComponent.h"
 
@@ -136,7 +137,8 @@ bool FParryImpactRestoreTest::RunTest(const FString& Parameters)
 {
 	FScopedBattleTestWorld TestWorld; auto* World = TestWorld.GetWorld();
 	auto* Owner = World->SpawnActor<APawn>(); auto* Target = World->SpawnActor<AActor>();
-	auto* Settings = World->SpawnActor<AWorldSettings>();
+	auto* Settings = World->GetWorldSettings();
+	auto* Slow = World->GetSubsystem<UBattleSlowMotionSubsystem>();
 	auto* Magic = NewObject<UMagicPresentationComponent>(Owner);
 	Owner->AddInstanceComponent(Magic); Magic->RegisterComponent();
 	auto* Mesh = NewObject<USkeletalMeshComponent>(Owner);
@@ -145,10 +147,9 @@ bool FParryImpactRestoreTest::RunTest(const FString& Parameters)
 	{
 		for (int32 Case = 0; Case < 3; ++Case)
 		{
-			Settings->SetTimeDilation(Original * 0.15f);
+			Settings->SetTimeDilation(Original);
+			Magic->ImpactSlowId = Slow->Begin(EBattleSlowMotion::Parry, 0.15f);
 			Magic->bImpactHolding = true;
-			Magic->ImpactWorldSettings = Settings;
-			Magic->PreviousTimeDilation = Original;
 			Magic->ImpactEndsAt = 100.15;
 			Magic->TargetActor = Target;
 			Magic->Mesh = Mesh;
@@ -163,6 +164,16 @@ bool FParryImpactRestoreTest::RunTest(const FString& Parameters)
 			TestEqual(TEXT("Repeated cleanup preserves speed"), Settings->TimeDilation, Original);
 		}
 	}
+	Settings->SetTimeDilation(.8f);
+	const uint64 Parry = Slow->Begin(EBattleSlowMotion::Parry, .1f);
+	const uint64 Result = Slow->Begin(EBattleSlowMotion::Result, .5f);
+	TestEqual(TEXT("Victory takes over from the original speed"), Settings->TimeDilation, .4f);
+	Slow->End(Parry);
+	TestEqual(TEXT("A late parry cleanup preserves result speed"), Settings->TimeDilation, .4f);
+	TestEqual(TEXT("Result owns speed until dismissed"), Slow->Begin(EBattleSlowMotion::Parry, .25f), uint64(0));
+	Slow->End(Result);
+	TestEqual(TEXT("Dismissal restores speed before either effect"), Settings->TimeDilation, .8f);
+
 	return true;
 }
 

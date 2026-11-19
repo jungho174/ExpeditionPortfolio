@@ -30,7 +30,7 @@ private:
 	FDelegateHandle StateHandle;
 	FTSTicker::FDelegateHandle SlowTicker;
 	double SlowEndsAt=0;
-	float PreviousDilation=1;
+	uint64 ResultSlowId = 0;
 	bool bActive=false;
 	bool bPausedByResult=false;
 };

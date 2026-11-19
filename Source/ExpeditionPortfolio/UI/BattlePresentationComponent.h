@@ -14,7 +14,6 @@ class ABattleCameraRig;
 class APlayerController;
 struct FBattleCameraShot;
 class UParryFeedbackData;
-class AWorldSettings;
 class UNiagaraComponent;
 class UCameraShakeBase;
 class UCharacterActionData;
@@ -42,8 +41,7 @@ protected:
 private:
 	FDelegateHandle DefenseHandle;
 	FTSTicker::FDelegateHandle ParryTicker;
-	TWeakObjectPtr<AWorldSettings> SlowWorld;
-	float PreviousParryDilation=1;
+	uint64 ParrySlowId = 0;
 	UPROPERTY(Transient) TObjectPtr<UNiagaraComponent> ParryFX;
 	UPROPERTY(Transient) TObjectPtr<UCameraShakeBase> ParryShake;
 	void HandleState(EBattleState Before, EBattleState After);

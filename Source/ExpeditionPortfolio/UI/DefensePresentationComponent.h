@@ -5,21 +5,18 @@
 #include "Combat/BattleState.h"
 #include "Components/ActorComponent.h"
 #include "TimerManager.h"
-#include "Containers/Ticker.h"
 #include "DefensePresentationComponent.generated.h"
 
 class UDefensePresentationData;
 class UBattleCoordinator;
 class USkeletalMeshComponent;
 class UAnimMontage;
-class AWorldSettings;
 
 UCLASS(ClassGroup = (Combat), meta = (BlueprintSpawnableComponent))
 class EXPEDITIONPORTFOLIO_API UDefensePresentationComponent : public UActorComponent
 {
 	GENERATED_BODY()
 public:
-	void ReleaseImpactForBattleResult();
 	UDefensePresentationComponent();
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Defense Presentation")
 	TObjectPtr<UDefensePresentationData> PresentationData;
@@ -29,9 +26,6 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 private:
-	FTSTicker::FDelegateHandle SuccessSlowTicker;
-	TWeakObjectPtr<AWorldSettings> SuccessSlowWorld;
-	float PreviousSuccessDilation=1;
 #if WITH_DEV_AUTOMATION_TESTS
 	friend class FDefensePresentationRestoreTest;
 	friend class FDefenseGroundingTest;

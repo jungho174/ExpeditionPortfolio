@@ -1,6 +1,5 @@
 #include "UI/DefensePresentationComponent.h"
 #include "NiagaraFunctionLibrary.h"
-#include "GameFramework/WorldSettings.h"
 #include "HAL/PlatformTime.h"
 #include "UI/DefensePresentationData.h"
 #include "Animation/AnimInstance.h"
@@ -187,7 +186,6 @@ void UDefensePresentationComponent::OnMontageEnded(UAnimMontage* Montage, const 
 
 void UDefensePresentationComponent::StopPresentation()
 {
-	ReleaseImpactForBattleResult();
 	SetComponentTickEnabled(false);
 	if (GetWorld()) { GetWorld()->GetTimerManager().ClearTimer(GuardTimer); }
 	if (bDodging && Mesh.IsValid()) { Mesh->SetRelativeTransform(OriginalMeshTransform); }
@@ -202,13 +200,6 @@ void UDefensePresentationComponent::StopPresentation()
 		Mesh->GetAnimInstance()->Montage_Stop(0.12f, ActiveMontage);
 	}
 	ActiveMontage = nullptr;
-}
-
-void UDefensePresentationComponent::ReleaseImpactForBattleResult()
-{
-	if (SuccessSlowTicker.IsValid()) { FTSTicker::GetCoreTicker().RemoveTicker(SuccessSlowTicker); SuccessSlowTicker.Reset(); }
-	if (SuccessSlowWorld.IsValid()) { SuccessSlowWorld->SetTimeDilation(PreviousSuccessDilation); }
-	SuccessSlowWorld.Reset();
 }
 
 void UDefensePresentationComponent::EndPlay(const EEndPlayReason::Type Reason)
