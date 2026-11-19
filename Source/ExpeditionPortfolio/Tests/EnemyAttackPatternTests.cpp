@@ -130,4 +130,57 @@ bool FEnemyComboValidationTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Non-finite hit damage rejected"),Pattern->ValidatePattern(Reason));
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEnemyPatternTurnSnapshotTest,
+	"ExpeditionPortfolio.Combat.EnemyAttackPattern.TurnSnapshot",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEnemyPatternTurnSnapshotTest::RunTest(const FString& Parameters)
+{
+	auto* Pattern = NewObject<UEnemyAttackPatternData>();
+	Pattern->PatternId = TEXT("Combo");
+	Pattern->Hits.SetNum(2);
+	Pattern->Hits[0].FallbackHitTime = 0.75f;
+	Pattern->Hits[1].HitTimeOffset = -0.1f;
+	auto* Montage = NewObject<UAnimMontage>();
+	Montage->SetCompositeLength(3.0f);
+	Pattern->AttackMontage = Montage;
+	const auto AddSecondHitMarker = [Montage](float Time)
+	{
+		auto* Notify = NewObject<UAnimNotify_EnemyHit>(Montage);
+		Notify->HitIndex = 1;
+		FAnimNotifyEvent& Event = Montage->Notifies.AddDefaulted_GetRef();
+		Event.Notify = Notify;
+		Event.Link(Montage, Time);
+		return Event.GetTriggerTime();
+	};
+	const float SecondMarkerTime = AddSecondHitMarker(1.8f);
+	auto* Disabled = NewObject<UEnemyAttackPatternData>();
+	Disabled->SelectionWeight = 0.0f;
+	const TArray<TObjectPtr<UEnemyAttackPatternData>> Candidates = {Disabled, Pattern};
+	FRandomStream Random(92);
+	FRandomStream Expected(92);
+	FEnemyAttackPatternSnapshot InFlight;
+	const auto* Selected = UEnemyAttackPatternData::SelectPattern(Candidates, Random, &InFlight);
+	TestTrue(TEXT("Only the enabled combo is selected"), Selected == Pattern);
+	Expected.GetFraction();
+	TestEqual(TEXT("A valid draw consumes one random number"), Random.GetCurrentSeed(), Expected.GetCurrentSeed());
+	if (!TestEqual(TEXT("Both hits copied at selection"), InFlight.Hits.Num(), 2)) { return false; }
+	TestEqual(TEXT("Unmarked first hit uses its own fallback"), InFlight.Hits[0].HitTime, 0.75f);
+	TestTrue(TEXT("Second hit uses indexed marker plus offset"),
+		FMath::IsNearlyEqual(InFlight.Hits[1].HitTime, SecondMarkerTime - 0.1f));
+
+	Pattern->Hits[0].FallbackHitTime = 0.65f;
+	AddSecondHitMarker(2.1f);
+	TArray<FString> Errors;
+	FEnemyAttackPatternSnapshot NextTurn = InFlight;
+	const auto* NewSelection = UEnemyAttackPatternData::SelectPattern(Candidates, Random, &NextTurn,
+		[&Errors](const UEnemyAttackPatternData*, const FString& Reason) { Errors.Add(Reason); });
+	TestNull(TEXT("Next turn rejects the new duplicate marker"), NewSelection);
+	TestTrue(TEXT("Only the invalid combo is reported"), Errors.Num() == 1 && Errors[0].Contains(TEXT("Hit 2")));
+	TestEqual(TEXT("No eligible candidates preserve the random stream"), Random.GetCurrentSeed(), Expected.GetCurrentSeed());
+	TestEqual(TEXT("Previous selection is replaced with the fallback"), NextTurn.PatternId, FName(TEXT("BasicAttack")));
+	TestEqual(TEXT("An in-flight attack retains the original timing"), InFlight.Hits[0].HitTime, 0.75f);
+	return true;
+}
 #endif

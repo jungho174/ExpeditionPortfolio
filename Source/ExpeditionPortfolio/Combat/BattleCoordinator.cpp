@@ -849,19 +849,14 @@ void UBattleCoordinator::ClearEnemyPattern()
 
 void UBattleCoordinator::SelectEnemyPattern()
 {
-	const auto& Patterns = EnemyCombatant->EnemyAttackPatterns;
-	for (const UEnemyAttackPatternData* Pattern : Patterns)
+	const auto LogInvalidPattern = [this](const UEnemyAttackPatternData* Pattern, const FString& Reason)
 	{
-		FString Reason;
-		if (!IsValid(Pattern) || !Pattern->ValidatePattern(Reason))
-		{
-			UE_LOG(LogBattleCoordinator, Warning, TEXT("Enemy '%s': skipping pattern '%s': %s"),
-				*GetNameSafe(ActiveEnemyActor.Get()), *GetNameSafe(Pattern),
-				IsValid(Pattern) ? *Reason : TEXT("null or invalid reference"));
-		}
-	}
-	const UEnemyAttackPatternData* Selected = UEnemyAttackPatternData::SelectPattern(Patterns, PatternRandom);
-	ActiveEnemyPattern = Selected ? Selected->MakeSnapshot() : FEnemyAttackPatternSnapshot();
+		UE_LOG(LogBattleCoordinator, Warning, TEXT("Enemy '%s': skipping pattern '%s': %s"),
+			*GetNameSafe(ActiveEnemyActor.Get()), *GetNameSafe(Pattern), *Reason);
+	};
+	// 이번 턴에 검증한 타격 시각과 피해량을 공격이 끝날 때까지 사용한다.
+	const UEnemyAttackPatternData* Selected = UEnemyAttackPatternData::SelectPattern(
+		EnemyCombatant->EnemyAttackPatterns, PatternRandom, &ActiveEnemyPattern, LogInvalidPattern);
 	bHasActiveEnemyPattern = true;
 	if (!Selected)
 	{

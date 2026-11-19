@@ -105,7 +105,14 @@ public:
 	bool ValidatePattern(FString& OutReason) const;
 	FEnemyAttackPatternSnapshot MakeSnapshot() const;
 
-	// Pure selection boundary; callers validate/log candidates before passing them here.
+	// 이번 턴의 유효한 후보만 추첨하고 선택한 타격 정보를 복사한다.
 	static const UEnemyAttackPatternData* SelectPattern(
-		const TArray<TObjectPtr<UEnemyAttackPatternData>>& Patterns, FRandomStream& Random);
+		const TArray<TObjectPtr<UEnemyAttackPatternData>>& Patterns, FRandomStream& Random,
+		FEnemyAttackPatternSnapshot* OutSnapshot = nullptr,
+		const TFunction<void(const UEnemyAttackPatternData*, const FString&)>& OnInvalid = {});
+
+private:
+	TArray<FEnemyAttackHit> ResolveHits(TArray<int32>& OutMarkerCounts) const;
+	bool TryResolveValidHits(TArray<FEnemyAttackHit>& OutHits, FString& OutReason) const;
+	FEnemyAttackPatternSnapshot MakeSnapshot(TArray<FEnemyAttackHit> ResolvedHits) const;
 };
