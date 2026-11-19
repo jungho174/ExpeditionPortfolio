@@ -82,12 +82,12 @@ bool FMagicProjectileLifecycleTest::RunTest(const FString& Parameters)
 		{
 			AddExpectedError(TEXT("launch marker missing"), EAutomationExpectedErrorFlags::Contains, 1);
 			Presentation->OnMontageEnded(nullptr, false, 91);
-			TestTrue(TEXT("Missing marker launches instead of inventing instant damage"), Presentation->bProjectileInFlight);
+			TestTrue(TEXT("Missing marker launches instead of inventing instant damage"), Presentation->ProjectileFlight.IsFlying());
 		}
 		else { TestTrue(TEXT("Launch accepted"), Presentation->LaunchProjectile()); }
 		TestFalse(TEXT("Duplicate launch rejected"), Presentation->LaunchProjectile());
 		Presentation->TickComponent(2.0f, LEVELTICK_All, nullptr);
-		TestEqual(TEXT("A hitch in the launch frame is not pre-launch flight time"), Presentation->FlightElapsed, 0.0f);
+		TestTrue(TEXT("A hitch in the launch frame is not pre-launch flight time"), Presentation->ProjectileFlight.IsFlying());
 		TestEqual(TEXT("Launch does not damage target"), EnemyHP->GetCurrentHealth(), 100.0f);
 		Presentation->UpdateProjectile(0.4f);
 		TestEqual(TEXT("No damage while travelling"), EnemyHP->GetCurrentHealth(), 100.0f);

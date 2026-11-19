@@ -380,13 +380,14 @@ void UMagicPresentationComponent::OnMontageEnded(UAnimMontage* Montage, const bo
 	if (!bInterrupted && bCharging) { return; }
 	else if (!bInterrupted && ActiveData && ActiveData->bUseProjectile)
 	{
+		// 공격 모션과 발사체 비행이 모두 끝났을 때 턴을 넘긴다.
 		bAttackMontageFinished = true;
-		if (!bProjectileLaunched)
+		if (!ProjectileFlight.HasLaunched())
 		{
 			UE_LOG(LogBattleCoordinator, Warning, TEXT("Projectile launch marker missing; launching at normal montage completion."));
 			if (!LaunchProjectile()) { FinishAction(true); return; }
 		}
-		if (!bProjectileInFlight) { FinishAction(false); }
+		if (ProjectileFlight.HasArrived()) { FinishAction(false); }
 	}
 	else { FinishAction(bInterrupted); }
 }
@@ -403,7 +404,7 @@ void UMagicPresentationComponent::HandleHitNotify(USkeletalMeshComponent* Source
 	if (bCastPreparing) { PauseCastForQTE(ActiveId); return; }
 	if (ActiveData && ActiveData->bUseProjectile)
 	{
-		if (!bProjectileLaunched && !LaunchProjectile()) { FinishAction(true); }
+		if (!ProjectileFlight.HasLaunched() && !LaunchProjectile()) { FinishAction(true); }
 		return;
 	}
 	if (UBattleCoordinator* Battle = GetWorld()->GetSubsystem<UBattleCoordinator>())
@@ -450,7 +451,7 @@ void UMagicPresentationComponent::PlayAttackSound()
 void UMagicPresentationComponent::PlayImpactSound()
 {
 	if (!ActiveData) { return; }
-	const FVector Location = bAreaAction?GetAimLocation():ActiveData->bUseProjectile ? ProjectileEnd
+	const FVector Location = bAreaAction?GetAimLocation():ActiveData->bUseProjectile ? ProjectileFlight.GetEnd()
 		: TargetActor.IsValid() ? TargetActor->GetActorLocation() : GetOwner()->GetActorLocation();
 	CombatSoundPlayback::Play(GetOwner(), ActiveData->ImpactSound, Location,
 		ActiveData->ImpactSoundVolume, ActiveData->ImpactSoundDelay, ActiveData->ImpactSoundStartTime);
@@ -460,55 +461,47 @@ void UMagicPresentationComponent::TickComponent(float DeltaTime, ELevelTick Tick
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	if (bCharging) { UpdateChargeAnchor(); }
-	else if (bProjectileInFlight)
+	else if (ProjectileFlight.IsFlying())
 	{
-		// A marker may enable this tick midway through the current animation frame.
-		// Its whole DeltaTime predates launch, especially during first-use VFX compilation hitches.
-		if (GFrameCounter != ProjectileLaunchFrame) { UpdateProjectile(DeltaTime); }
+		// 발사한 프레임의 경과 시간에는 발사 전 시간이 포함되므로 다음 프레임부터 이동한다.
+		if (ProjectileFlight.CanAdvance(GFrameCounter)) { UpdateProjectile(DeltaTime); }
 	}
 	else { SetComponentTickEnabled(false); }
 }
 
 bool UMagicPresentationComponent::LaunchProjectile()
 {
-	if (!ActiveId || bProjectileLaunched || !ActiveData || !ActiveData->bUseProjectile
+	if (!ActiveId || ProjectileFlight.HasLaunched() || !ActiveData || !ActiveData->bUseProjectile
 		|| !ActiveData->ValidateProjectile() || !Mesh.IsValid() || GetEffectTargets().IsEmpty()) { return false; }
 	const FTransform LaunchOrigin(GetOwner()->GetActorRotation(), Mesh->GetSocketLocation(ActiveData->CastSocket));
 	const FTransform LaunchTransform = ActiveData->AttackEffectTransform * LaunchOrigin;
-	ProjectileStart = LaunchTransform.GetLocation();
-	ProjectileEnd=GetAimLocation();
-	FlightDuration = ActiveData->GetFlightDuration(FVector::Distance(ProjectileStart, ProjectileEnd));
-	if (FlightDuration <= 0) { return false; }
-	FlightElapsed = 0;
-	ProjectileLaunchFrame = GFrameCounter;
-	bProjectileLaunched = true;
+	const FVector Start = LaunchTransform.GetLocation();
+	const FVector End = GetAimLocation();
+	const float Duration = ActiveData->GetFlightDuration(FVector::Distance(Start, End));
+	if (!ProjectileFlight.Launch(Start, End, Duration, GFrameCounter)) { return false; }
 	PlayAttackSound();
-	bProjectileInFlight = true;
-	ProjectileFacing = (ProjectileEnd - ProjectileStart).Rotation();
 	PendingImpactTransform = ActiveData->ImpactEffectTransform;
 	PendingImpactEffect = ActiveData->ImpactEffect;
 	if (ActiveData->AttackEffect)
 	{
 		ProjectileFX = UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), ActiveData->AttackEffect,
-			ProjectileStart, (ProjectileFacing.Quaternion() * ActiveData->AttackEffectTransform.GetRotation()).Rotator(),
+			Start, (ProjectileFlight.GetFacing().Quaternion() * ActiveData->AttackEffectTransform.GetRotation()).Rotator(),
 			LaunchTransform.GetScale3D());
 		if (IsValid(ProjectileFX)) { ProjectileFX->AddTickPrerequisiteComponent(this); }
 	}
 	SetComponentTickEnabled(true);
 	UE_LOG(LogBattleCoordinator, Log, TEXT("Magic projectile launched: Action=%lld Flight=%.3f Start=%s End=%s"),
-		ActiveId, FlightDuration, *ProjectileStart.ToString(), *ProjectileEnd.ToString());
+		ActiveId, Duration, *Start.ToString(), *End.ToString());
 	return true;
 }
 
 void UMagicPresentationComponent::UpdateProjectile(float DeltaTime)
 {
-	if (!ActiveId || !bProjectileInFlight) { return; }
+	if (!ActiveId || !ProjectileFlight.IsFlying()) { return; }
 	if (GetEffectTargets().IsEmpty() || !Mesh.IsValid()) { FinishAction(true); return; }
-	FlightElapsed += FMath::Max(0.0f, DeltaTime);
-	const float Alpha = FMath::Clamp(FlightElapsed / FlightDuration, 0.0f, 1.0f);
-	if (IsValid(ProjectileFX)) { ProjectileFX->SetWorldLocation(FMath::Lerp(ProjectileStart, ProjectileEnd, Alpha)); }
-	if (Alpha < 1) { return; }
-	bProjectileInFlight = false;
+	const FVector Position = ProjectileFlight.Advance(DeltaTime);
+	if (IsValid(ProjectileFX)) { ProjectileFX->SetWorldLocation(Position); }
+	if (!ProjectileFlight.HasArrived()) { return; }
 	SetComponentTickEnabled(false);
 	if (IsValid(ProjectileFX))
 	{
@@ -523,13 +516,13 @@ void UMagicPresentationComponent::UpdateProjectile(float DeltaTime)
 	{
 		for (AActor* Target:GetEffectTargets())
 		{
-			const FVector Point=bAreaAction?UCombatantVisualData::ResolveAnchor(Target,ECombatantAnchor::Aim):ProjectileEnd;
-			const FTransform Impact=PendingImpactTransform*FTransform(ProjectileFacing,Point);
+			const FVector Point=bAreaAction?UCombatantVisualData::ResolveAnchor(Target,ECombatantAnchor::Aim):ProjectileFlight.GetEnd();
+			const FTransform Impact=PendingImpactTransform*FTransform(ProjectileFlight.GetFacing(),Point);
 			auto* Effect=UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(),PendingImpactEffect,Impact.GetLocation(),Impact.Rotator(),Impact.GetScale3D());
 			if (!AttackFX) { AttackFX=Effect; } else if (Effect) { AdditionalAttackFX.Add(Effect); }
 		}
 	}
-	UE_LOG(LogBattleCoordinator, Log, TEXT("Magic projectile arrived: Action=%lld Position=%s"), ActiveId, *ProjectileEnd.ToString());
+	UE_LOG(LogBattleCoordinator, Log, TEXT("Magic projectile arrived: Action=%lld Position=%s"), ActiveId, *ProjectileFlight.GetEnd().ToString());
 	if (bAttackMontageFinished) { FinishAction(false); }
 }
 
@@ -604,11 +597,8 @@ void UMagicPresentationComponent::StopPresentation()
 	bAttackSoundPlayed = false;
 	bCounterAction = false;
 	ActiveMontageInstanceId = INDEX_NONE;
-	bProjectileInFlight = false;
-	bProjectileLaunched = false;
+	ProjectileFlight = FMagicProjectileFlight{};
 	bAttackMontageFinished = false;
-	FlightElapsed = 0;
-	FlightDuration = 0;
 	PendingImpactEffect = nullptr;
 	if (GetWorld()) { GetWorld()->GetTimerManager().ClearTimer(ChargeTimer); }
 	if (Mesh.IsValid() && Mesh->GetAnimInstance() && ActiveMontage)

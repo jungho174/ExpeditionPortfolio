@@ -7,6 +7,7 @@
 #include "Containers/Ticker.h"
 #include "Combat/ParryCounterProvider.h"
 #include "Combat/CharacterActionExecutor.h"
+#include "UI/MagicProjectileFlight.h"
 #include "MagicPresentationComponent.generated.h"
 
 class UMagicActionData;
@@ -91,16 +92,9 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UNiagaraComponent> ChargeFX;
 	UPROPERTY(Transient) TObjectPtr<UNiagaraComponent> AttackFX;
 	UPROPERTY(Transient) TObjectPtr<UNiagaraComponent> ProjectileFX;
-	FVector ProjectileStart = FVector::ZeroVector;
-	FVector ProjectileEnd = FVector::ZeroVector;
-	FRotator ProjectileFacing = FRotator::ZeroRotator;
+	FMagicProjectileFlight ProjectileFlight;
 	FTransform PendingImpactTransform;
 	UPROPERTY(Transient) TObjectPtr<UNiagaraSystem> PendingImpactEffect;
-	float FlightElapsed = 0;
-	float FlightDuration = 0;
-	uint64 ProjectileLaunchFrame = 0;
-	bool bProjectileLaunched = false;
-	bool bProjectileInFlight = false;
 	bool bAttackMontageFinished = false;
 	TWeakObjectPtr<USkeletalMeshComponent> Mesh;
 	TWeakObjectPtr<AActor> TargetActor;
