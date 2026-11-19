@@ -30,7 +30,7 @@ namespace
 		Slot->SetPosition(Position);
 		Slot->SetSize(Size);
 	}
-	UTextBlock* Label(UWidgetBlueprint* BP, const TCHAR* Name, const TCHAR* Value, int32 Size)
+	UTextBlock* CreateCombatMenuLabel(UWidgetBlueprint* BP, const TCHAR* Name, const TCHAR* Value, int32 Size)
 	{
 		auto* Text = Widget<UTextBlock>(BP, Name);
 		Text->SetText(FText::FromString(Value));
@@ -53,7 +53,7 @@ namespace
 		Style.NormalPadding = FMargin(20, 12);
 		Style.PressedPadding = FMargin(22, 14, 18, 10);
 		B->SetStyle(Style);
-		B->SetContent(Label(BP, TextName, Value, FontSize));
+		B->SetContent(CreateCombatMenuLabel(BP, TextName, Value, FontSize));
 		Place(Page, B, Position, Size);
 	}
 }
@@ -76,7 +76,7 @@ bool UCombatMenuEditorLibrary::BuildCommandLayout(UBlueprint* Blueprint)
 	Menu->SetRenderTransformPivot(FVector2D::ZeroVector);
 	Menu->SetRenderTransformAngle(-8);
 	Menu->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	auto* Title = Label(BP, TEXT("TXT_MenuTitle"), TEXT("C O M M A N D"), 14);
+	auto* Title = CreateCombatMenuLabel(BP, TEXT("TXT_MenuTitle"), TEXT("C O M M A N D"), 14);
 	Title->SetColorAndOpacity(FLinearColor(0.8f, 0.65f, 0.36f));
 	Place(Menu, Title, FVector2D(24, 0), FVector2D(440, 30));
 	const TCHAR* Names[] = { TEXT("CN_MainMenu"), TEXT("CN_ItemMenu"), TEXT("CN_SkillMenu") };
