@@ -1,28 +1,18 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Combat/BattleCoordinator.h"
-#include "Combat/ParryCounterProvider.h"
 #include "Combat/CharacterCombatData.h"
 #include "Combat/BattleRulesData.h"
 #include "Combat/CombatItemData.h"
-#include "UI/ItemPresentationComponent.h"
 #include "ExpeditionPortfolioGameMode.h"
 #include "Combat/CharacterActionExecutor.h"
-#include "UI/DefensePresentationComponent.h"
 
 #include "Combat/CombatantComponent.h"
 #include "Combat/ActionQTESubsystem.h"
 #include "Combat/PlayerCommandData.h"
-#if WITH_DEV_AUTOMATION_TESTS
-#include "UI/PlayerUtilityPresentationComponent.h"
-#include "UI/MagicPresentationComponent.h"
-#include "UI/MagicActionData.h"
-#endif
-#include "UI/EnemyAttackPresentationComponent.h"
 #include "UI/BattlePresentationComponent.h"
 #include "UI/BattleResultPresentationComponent.h"
 #include "Exploration/Encounters/BattleEncounterTrigger.h"
-#include "Animation/AnimMontage.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/Controller.h"
@@ -107,6 +97,7 @@ bool UBattleCoordinator::RequestBattleStart(AActor* EncounterSource, APawn* Play
 	return RequestGroupBattleStart(EncounterSource, PlayerPawn, {EnemyActor}, {});
 }
 
+// 모든 참가자와 전투 규칙을 검증한 뒤에만 진입 상태와 턴 순서를 등록한다.
 bool UBattleCoordinator::RequestGroupBattleStart(AActor* EncounterSource, APawn* PlayerPawn, const TArray<AActor*>& Enemies, const TArray<APawn*>& AdditionalAllies)
 {
 	AActor* EnemyActor = Enemies.IsEmpty() ? nullptr : Enemies[0];
@@ -222,8 +213,8 @@ bool UBattleCoordinator::RequestGroupBattleStart(AActor* EncounterSource, APawn*
 	ActiveEnemyActor = EnemyActor;
 	PlayerCombatant = FoundPlayerCombatant;
 	EnemyCombatant = FoundEnemyCombatant;
-	ResultSnapshot = FBattleResult();
-	bResultReady = false;
+	EncounterRecord.Result = FBattleResult();
+	EncounterRecord.bReady = false;
 	BattleAllies.Reset(); BattleEnemies.Reset(); TurnOrder.Reset(); TurnIndex=0; BattleRound=1;
 	for (APawn* Ally : Allies) { BattleAllies.Add(Ally); TurnOrder.Add(Ally); CaptureParticipant(Ally,true); }
 	for (AActor* Enemy : Enemies) { BattleEnemies.Add(Enemy); TurnOrder.Add(Enemy); CaptureParticipant(Enemy,false); }
@@ -232,17 +223,17 @@ bool UBattleCoordinator::RequestGroupBattleStart(AActor* EncounterSource, APawn*
 	for (AActor* Enemy : Enemies) { FBattleFacingRestore::Face(Enemy,PlayerPawn); }
 	for (APawn* Ally : Allies) { FBattleFacingRestore::Face(Ally,EnemyActor); }
  TurnTransitionDelay=ActiveRules->TurnTransitionDelay;
- ItemStocks.Reset();
- for (const auto& Stock:ActiveRules->InitialItems) { ItemStocks.Add(Stock.Item->ItemId,Stock.Quantity); }
- EntryItemStocks=ItemStocks;
- RemainingPotions=GetRemainingItems(GetDefaultItem());
+ Resources.ItemStocks.Reset();
+ for (const auto& Stock:ActiveRules->InitialItems) { Resources.ItemStocks.Add(Stock.Item->ItemId,Stock.Quantity); }
+ Resources.RemainingPotions=GetRemainingItems(GetDefaultItem());
  PotionHealing=GetDefaultItem()?GetDefaultItem()->HealingAmount:0;
 #if WITH_DEV_AUTOMATION_TESTS
  if (TestTurnTransitionDelay>=0) { TurnTransitionDelay=TestTurnTransitionDelay; }
  MeleeDamage=FoundPlayerCombatant->PlayerCommandData && FoundPlayerCombatant->PlayerCommandData->IsValidConfiguration()?FoundPlayerCombatant->PlayerCommandData->MeleeDamage:15;
 #endif
- bPowerStrikeUsed=false;ActionUses.Reset();EntryActionUses=ActionUses;
- EntryPotions=RemainingPotions;bEntryPowerStrikeUsed=bPowerStrikeUsed;
+	Resources.bPowerStrikeUsed = false;
+	Resources.ActionUses.Reset();
+	EncounterRecord.Entry.Resources = Resources;
 	SetDefenseResult(EBattleDefenseResult::None);
 
 	++BattleSerial;
@@ -451,6 +442,7 @@ bool UBattleCoordinator::ReturnToExploration()
 	return TryTransitionTo(EBattleState::Exploration);
 }
 
+// 참가자의 체력 통지를 해제한 뒤 연출·타이머·전투 참조를 정리한다.
 void UBattleCoordinator::ClearBattleContext()
 {
 	if (GetBattlePlayerController())
@@ -461,10 +453,16 @@ void UBattleCoordinator::ClearBattleContext()
 		}
 	}
 	ClearParticipants();
-	bResultReady = false;
+	EncounterRecord.bReady = false;
 	BattleAllies.Reset();
 	BattleEnemies.Reset(); TurnOrder.Reset(); ExplorationPlayerPawn.Reset(); TurnIndex=0; BattleRound=1;
-	PendingAction=nullptr;PendingItem=nullptr;PlayerAction.Item=nullptr;ActiveRules=nullptr;ItemStocks.Reset();EntryItemStocks.Reset();ActionUses.Reset(); EntryActionUses.Reset();
+	PendingAction = nullptr;
+	PendingItem = nullptr;
+	PlayerAction.Item = nullptr;
+	ActiveRules = nullptr;
+	Resources.ItemStocks.Reset();
+	Resources.ActionUses.Reset();
+	EncounterRecord.Entry.Resources = FBattleResources();
 	if (GetWorld()) { GetWorld()->GetTimerManager().ClearTimer(TargetConfirmationTimer); }
 	bConfirmingTarget = false;
 	bSelectingTarget = false;
@@ -472,8 +470,6 @@ void UBattleCoordinator::ClearBattleContext()
 	if (GetWorld()) { GetWorld()->GetTimerManager().ClearTimer(IntroTimer); }
 	if (BattlePresentation.IsValid()) { BattlePresentation->ReleaseParryFeedback(); BattlePresentation->RestoreExplorationCamera(); }
 	BattlePresentation.Reset();
-	PlayerFacingRestore.Restore();
-	EnemyFacingRestore.Restore();
 	ClearPlayerAction();
 	ClearEnemyAction();
 	EnemyAction.CounterAction=nullptr;
@@ -484,276 +480,8 @@ void UBattleCoordinator::ClearBattleContext()
 	ActiveEnemyActor.Reset();
 	PlayerCombatant.Reset();
 	EnemyCombatant.Reset();
-	bPowerStrikeUsed = false;
-	RemainingPotions = 0;
-}
-
-void UBattleCoordinator::CaptureParticipant(AActor* Actor, bool bAlly)
-{
-	if (!Actor || Participants.ContainsByPredicate([Actor](const FParticipantSnapshot& Entry) { return Entry.Actor.Get()==Actor; })) { return; }
-	auto* Health = Actor->FindComponentByClass<UCombatantComponent>();
-	if (!Health) { return; }
-	FParticipantSnapshot Entry;
-	Entry.Actor=Actor; Entry.Combatant=Health; Entry.Health=Health->GetCurrentHealth();
-	Entry.Transform=Actor->GetActorTransform(); Entry.bAlly=bAlly;
-	Entry.FacingRestore.Capture(Actor);
-	Entry.HealthHandle=Health->OnHealthChanged().AddWeakLambda(this,[this,bAlly](float Before,float After)
-	{
-		if (CurrentState==EBattleState::Victory || CurrentState==EBattleState::Defeat) { return; }
-		const float Damage=FMath::Max(0.f,Before-After);
-		if (bAlly) { ResultSnapshot.DamageReceived+=Damage; } else { ResultSnapshot.DamageDealt+=Damage; }
-		// External damage is checked after its broadcast stack unwinds. Normal hit paths check immediately.
-		if (After<=0 && !ResultCheckTicker.IsValid())
-		{
-			ResultCheckTicker=FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this,[this](float)
-			{
-				if (IsBattleOperationBusy()) { return true; }
-				ResultCheckTicker.Reset();
-				HandleParticipantDefeat();
-				return false;
-			}));
-		}
-	});
-	Participants.Add(Entry);
-}
-
-void UBattleCoordinator::ClearParticipants()
-{
-	if (ResultCheckTicker.IsValid()) { FTSTicker::GetCoreTicker().RemoveTicker(ResultCheckTicker); ResultCheckTicker.Reset(); }
-	for (auto& Entry:Participants)
-	{
-		Entry.FacingRestore.Restore();
-		if (Entry.Combatant.IsValid()) { Entry.Combatant->OnHealthChanged().Remove(Entry.HealthHandle); }
-	}
-	Participants.Reset();
-}
-
-bool UBattleCoordinator::TryFinishBattle()
-{
-	if (CurrentState==EBattleState::Victory || CurrentState==EBattleState::Defeat) { return true; }
-	if (CurrentState==EBattleState::Exploration || CurrentState==EBattleState::ReturnToField
-		|| !PlayerCombatant.IsValid() || !EnemyCombatant.IsValid()) { return false; }
-	const bool bAllEnemiesDefeated=!HasLivingSide(false);
-	const bool bDefeat=!HasLivingSide(true);
-	if (!bDefeat && !bAllEnemiesDefeated) { return false; }
-	ResultSnapshot.bVictory=!bDefeat;
-	ResultSnapshot.Party.Reset();
-	for (const auto& Entry:Participants)
-	{
-		if (!Entry.bAlly || !Entry.Combatant.IsValid()) { continue; }
-		FBattlePartyResult Member;
-		Member.Name=Entry.Combatant->CombatDisplayName;
-		if (Member.Name.IsEmpty() || Member.Name.ToString()==TEXT("적"))
-		{
-			Member.Name=FText::FromString(Entry.Actor.Get()==ActivePlayerPawn.Get()?TEXT("플레이어"):TEXT("동료"));
-		}
-		Member.Health=Entry.Combatant->GetCurrentHealth(); Member.MaxHealth=Entry.Combatant->GetMaxHealth();
-		ResultSnapshot.Party.Add(Member);
-	}
-	ClearBattleTimers();
-	auto& Timers=GetWorld()->GetTimerManager();
-	Timers.ClearTimer(IntroTimer); Timers.ClearTimer(TargetConfirmationTimer); Timers.ClearTimer(PlayerAction.TimeoutTimer);
-	Timers.ClearTimer(EnemyAction.WindowOpenTimer); Timers.ClearTimer(EnemyAction.TimeoutTimer); Timers.ClearTimer(EnemyAction.CounterTimer);
-	GetWorld()->GetSubsystem<UActionQTESubsystem>()->CancelQTE(PlayerAction.QTESessionId);
-	bSelectingTarget=false; bConfirmingTarget=false;
-	if (!TryTransitionTo(bDefeat?EBattleState::Defeat:EBattleState::Victory)) { return false; }
-	// No local presentation (automation/server) still exposes the same explicit result decisions.
-	if (!GetBattlePlayerController() || !GetBattlePlayerController()->FindComponentByClass<UBattleResultPresentationComponent>())
-	{
-		NotifyResultReady();
-	}
-	UE_LOG(LogBattleCoordinator,Log,TEXT("Battle result captured: Victory=%d Dealt=%.1f Received=%.1f Parries=%d Dodges=%d"),
-		ResultSnapshot.bVictory,ResultSnapshot.DamageDealt,ResultSnapshot.DamageReceived,ResultSnapshot.SuccessfulParries,ResultSnapshot.SuccessfulDodges);
-	return true;
-}
-
-void UBattleCoordinator::NotifyResultReady()
-{
-	if (CurrentState==EBattleState::Victory || CurrentState==EBattleState::Defeat) { bResultReady=true; }
-}
-
-bool UBattleCoordinator::ContinueAfterVictory()
-{
-	if (!bResultReady || IsBattleOperationBusy() || CurrentState!=EBattleState::Victory) { return false; }
-	TGuardValue<bool> ActionGuard(bActionInProgress,true);
-	TWeakObjectPtr<ABattleEncounterTrigger> Trigger=Cast<ABattleEncounterTrigger>(ActiveEncounterSource.Get());
-	TArray<TWeakObjectPtr<AActor>> DefeatedEnemies;
-	for (const auto& Member:Participants)
-	{
-		if (!Member.bAlly && Member.Actor.IsValid()) { DefeatedEnemies.AddUnique(Member.Actor); }
-	}
-	if (!TryTransitionTo(EBattleState::ReturnToField)) { return false; }
-	// Unbind combat callbacks, stop actions and restore camera/world while the actors still exist.
-	ClearBattleContext();
-	if (Trigger.IsValid()) { Trigger->CompleteEncounter(); }
-	for (const TWeakObjectPtr<AActor>& Enemy:DefeatedEnemies)
-	{
-		if (Enemy.IsValid())
-		{
-			Enemy->SetActorEnableCollision(false);
-			Enemy->Destroy();
-		}
-	}
-	return TryTransitionTo(EBattleState::Exploration);
-}
-
-bool UBattleCoordinator::RetryBattle() { return RestoreEncounter(true); }
-bool UBattleCoordinator::RetreatFromBattle() { return RestoreEncounter(false); }
-
-bool UBattleCoordinator::RestoreEncounter(bool bRetry)
-{
-	if (!bResultReady || IsBattleOperationBusy() || CurrentState!=EBattleState::Defeat
-		|| !ActivePlayerPawn.IsValid() || !ActiveEnemyActor.IsValid() || !ActiveEncounterSource.IsValid()) { return false; }
-	APawn* Player=ExplorationPlayerPawn.Get();
-	if (!Player) { return false; }
-	const auto Enemies=GetBattleEnemies();
-	TArray<APawn*> Allies;
-	for (const auto& Member:TurnOrder) { if (Member.Get()!=Player && BattleAllies.Contains(Member)) { if (auto* Pawn=Cast<APawn>(Member.Get())) { Allies.Add(Pawn); } } }
-	AActor* Source=ActiveEncounterSource.Get();
-	auto* Trigger=Cast<ABattleEncounterTrigger>(Source);
-	FVector RetreatLocation;
-	if (!bRetry && (!Trigger || !Trigger->FindRetreatLocation(Player,RetreatLocation)))
-	{
-		UE_LOG(LogBattleCoordinator,Warning,TEXT("No safe retreat location. Set the encounter's fixed Retreat Point outside its volume."));
-		return false;
-	}
-	const auto Entry=Participants;
-	const int32 Potions=EntryPotions; const bool bUsed=bEntryPowerStrikeUsed; const auto Uses=EntryActionUses;const auto Stocks=EntryItemStocks;
-	if (!ReturnToExploration()) { return false; }
-	for (const auto& Member:Entry)
-	{
-		if (Member.Actor.IsValid()) { Member.Actor->SetActorTransform(Member.Transform,false,nullptr,ETeleportType::TeleportPhysics); }
-		if (Member.Combatant.IsValid()) { Member.Combatant->RestoreBattleHealth(Member.Health); }
-	}
-	if (!bRetry)
-	{
-		Player->SetActorLocation(RetreatLocation,false,nullptr,ETeleportType::TeleportPhysics);
-		Trigger->RearmAfterRetreat();
-		return true;
-	}
-	if (!RequestGroupBattleStart(Source,Player,Enemies,Allies)) { return false; }
-	ActionUses=Uses; EntryActionUses=Uses;ItemStocks=Stocks;EntryItemStocks=Stocks;
-	RemainingPotions=Potions; EntryPotions=Potions; bPowerStrikeUsed=bUsed; bEntryPowerStrikeUsed=bUsed;
-	for (const auto& Member:Entry)
-	{
-		if (Member.bAlly && Member.Actor.IsValid() && Member.Actor.Get()!=Player)
-		{
-			BattleAllies.AddUnique(Member.Actor); CaptureParticipant(Member.Actor.Get(),true);
-		}
-	}
-	return true;
-}
-
-void UBattleCoordinator::BroadcastTargetSelection()
-{
-	TGuardValue<bool> Guard(bTargetNotification, true);
-	TargetSelectionChanged.Broadcast();
-}
-
-bool UBattleCoordinator::BeginCommandSelection(EBattlePlayerCommand Command)
-{
-	if (Command==EBattlePlayerCommand::UsePotion) { return BeginItemSelection(GetDefaultItem()); }
-	if (bTargetNotification || bSelectingTarget || IsBattleOperationBusy() || !CanRequestPlayerCommand(Command)) { return false; }
-	// Capture only this encounter's living opponents, before the target camera moves.
-	FVector Forward = (ActiveEnemyActor->GetActorLocation() - ActivePlayerPawn->GetActorLocation()).GetSafeNormal2D();
-	TArray<AActor*> Candidates;
-	if (IsItemCommand(Command))
-	{
-		if (CanHealAlly(ActivePlayerPawn.Get())) { Candidates.Add(ActivePlayerPawn.Get()); }
-		for (const auto& Ally:BattleAllies) { if (CanHealAlly(Ally.Get())) { Candidates.AddUnique(Ally.Get()); } }
-	}
-	else { for (const auto& Enemy:BattleEnemies) { Candidates.Add(Enemy.Get()); } }
-	Targets.Build(Candidates, FVector::CrossProduct(FVector::UpVector, Forward));
-	if (!Targets.Get()) { return false; }
-	if (Command!=EBattlePlayerCommand::CharacterAction) { PendingAction=nullptr; }
-	PendingCommand = Command;
-	bSelectingTarget = true;
-	BroadcastTargetSelection();
-	return true;
-}
-
-bool UBattleCoordinator::IsRegisteredAlly(AActor* Ally) const
-{
-	return IsValid(Ally) && Ally->GetWorld()==GetWorld() && (Ally==ActivePlayerPawn.Get() || BattleAllies.Contains(Ally));
-}
-bool UBattleCoordinator::CanHealAlly(AActor* Ally) const
-{
-	if (!IsRegisteredAlly(Ally)) { return false; }
-	const auto* Stats=Ally->FindComponentByClass<UCombatantComponent>();
-	return Stats && !Stats->IsDefeated();
-}
-bool UBattleCoordinator::RegisterBattleAlly(AActor* Ally)
-{
-	if (CurrentState!=EBattleState::PlayerCommand || bSelectingTarget || bConfirmingTarget || bTargetNotification
-		|| !HasValidActiveBattle() || !FCombatTargetSelection::IsEligible(Ally) || Ally==ActiveEnemyActor.Get() || Ally->GetWorld()!=GetWorld()) { return false; }
-	const auto* Stats=Ally->FindComponentByClass<UCombatantComponent>();
-	if (!IsContentFreeTest() && (!Stats || Stats->Persistence!=ECombatantPersistence::UniquePartyMember || !Stats->HasValidIdentity())) { return false; }
-	BattleAllies.AddUnique(Ally); CaptureParticipant(Ally, true);
-	if (Cast<APawn>(Ally) && !TurnOrder.Contains(Ally)) { TurnOrder.Insert(Ally,BattleAllies.Num()-1); }
-	return true;
-}
-
-bool UBattleCoordinator::MoveTargetSelection(int32 Direction)
-{
-	if (!bSelectingTarget || bTargetNotification || IsBattleOperationBusy()) { return false; }
-	if (IsSelectingAllEnemies()) { return false; }
-	if (!HasValidActiveBattle()) { CancelTargetSelection(); ReturnToExploration(); return false; }
-	if (IsItemCommand(PendingCommand))
-	{
-		Targets.Candidates.RemoveAll([this](const TWeakObjectPtr<AActor>& Ally) { return !CanHealAlly(Ally.Get()); });
-	}
-	Targets.Move(Direction);
-	BroadcastTargetSelection();
-	if (Direction && Targets.Get()) { TGuardValue<bool> Guard(bTargetNotification,true); TargetNavigation.Broadcast(); }
-	return Targets.Get() != nullptr;
-}
-
-bool UBattleCoordinator::CancelTargetSelection()
-{
-	if (!bSelectingTarget || bTargetNotification || IsBattleOperationBusy()) { return false; }
-	bSelectingTarget = false;
-	PendingAction=nullptr;PendingItem=nullptr;
-	Targets.Reset();
-	BroadcastTargetSelection();
-	return true;
-}
-
-bool UBattleCoordinator::ConfirmTargetSelection()
-{
-	if (!bSelectingTarget || bTargetNotification || IsBattleOperationBusy()) { return false; }
-	if (IsSelectingAllEnemies()) { Targets.Move(0); RefreshAreaPrimaryTarget(); }
-	const bool bPotion=IsItemCommand(PendingCommand);
-	if (!HasValidActiveBattle() || (bPotion ? !CanHealAlly(Targets.Get()) : !IsRegisteredEnemy(Targets.Get())) || !CanRequestPlayerCommand(PendingCommand))
-	{
-		CancelTargetSelection();
-		ReturnToExploration();
-		return false;
-	}
-	ItemTarget=bPotion?Targets.Get():nullptr;
-	if (!bPotion) { ActiveEnemyActor=Targets.Get(); EnemyCombatant=Targets.Get()->FindComponentByClass<UCombatantComponent>(); }
-	bConfirmedAlly=bPotion;
-	bSelectingTarget = false;
-	Targets.Reset();
-	bConfirmingTarget = true;
-	{ TGuardValue<bool> Guard(bTargetNotification,true); TargetConfirmed.Broadcast(); }
-	// Observers restore the shoulder view now; commands remain blocked until the camera settles.
-	BroadcastTargetSelection();
-	const float Delay = BattlePresentation.IsValid() ? BattlePresentation->GetTargetConfirmationDuration() : 0.47f;
-	GetWorld()->GetTimerManager().SetTimer(TargetConfirmationTimer,
-		FTimerDelegate::CreateUObject(this, &ThisClass::FinishTargetConfirmation, BattleSerial), Delay, false);
-	return true;
-}
-
-void UBattleCoordinator::FinishTargetConfirmation(int64 ExpectedBattleId)
-{
-	if (!bConfirmingTarget || ExpectedBattleId != BattleSerial || CurrentState != EBattleState::PlayerCommand) { return; }
-	bConfirmingTarget = false;
-	if (!HasValidActiveBattle()) { ReturnToExploration(); BroadcastTargetSelection(); return; }
-	if (IsItemCommand(PendingCommand) && !CanHealAlly(ItemTarget.Get())) { ItemTarget.Reset(); BroadcastTargetSelection(); return; }
-	if (PendingCommand==EBattlePlayerCommand::CharacterAction) { RequestPlayerAction(PendingAction); }
-	else { RequestPlayerCommand(PendingCommand); }
-	PendingAction=nullptr;
-	BroadcastTargetSelection();
+	Resources.bPowerStrikeUsed = false;
+	Resources.RemainingPotions = 0;
 }
 
 void UBattleCoordinator::LogRejectedCommand(const TCHAR* CommandName, const TCHAR* Reason) const

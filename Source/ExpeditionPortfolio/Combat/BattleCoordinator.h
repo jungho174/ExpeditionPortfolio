@@ -10,7 +10,7 @@
 #include "Combat/BattleState.h"
 #include "Combat/AttackTiming.h"
 #include "Combat/BattleFacing.h"
-#include "Combat/BattleResult.h"
+#include "Combat/BattleEncounterRecord.h"
 #include "Combat/CombatNumber.h"
 #include "Containers/Ticker.h"
 #include "Combat/CombatTargetSelection.h"
@@ -81,13 +81,13 @@ public:
  void NotifyCounterFeedbackFinished(int64 ActionId);
 	FOnCombatNumber& OnCombatNumber() { return CombatNumberApplied; }
 	UPROPERTY(BlueprintAssignable, Category="Combat|Feedback") FOnCombatNumberBlueprint CombatNumberAppliedBlueprint;
-	UFUNCTION(BlueprintPure, Category="Combat|Result") FBattleResult GetBattleResult() const { return ResultSnapshot; }
-	UFUNCTION(BlueprintPure, Category="Combat|Result") bool IsResultReady() const { return bResultReady; }
+	UFUNCTION(BlueprintPure, Category="Combat|Result") FBattleResult GetBattleResult() const { return EncounterRecord.Result; }
+	UFUNCTION(BlueprintPure, Category="Combat|Result") bool IsResultReady() const { return EncounterRecord.bReady; }
 	UFUNCTION(BlueprintCallable, Category="Combat|Result") bool ContinueAfterVictory();
 	UFUNCTION(BlueprintCallable, Category="Combat|Result") bool RetryBattle();
 	UFUNCTION(BlueprintCallable, Category="Combat|Result") bool RetreatFromBattle();
 	void NotifyResultReady();
-	// Interactive commands wait for enemy or ally target confirmation.
+	// 대화형 명령은 적·아군 선택과 카메라 복귀를 마친 뒤 실행한다.
 	UFUNCTION(BlueprintCallable, Category="Combat|Target") bool RegisterBattleAlly(AActor* Ally);
 	UFUNCTION(BlueprintPure, Category="Combat|Target") bool IsSelectingAlly() const { return bSelectingTarget && IsItemCommand(PendingCommand); }
 	UFUNCTION(BlueprintPure, Category="Combat|Commands") bool IsCommandExhausted(EBattlePlayerCommand Command) const;
@@ -127,7 +127,7 @@ public:
 	bool CanRequestPlayerCommand(EBattlePlayerCommand Command) const;
 
 	UFUNCTION(BlueprintPure, Category="Combat|Items")
-	int32 GetRemainingPotions() const { return RemainingPotions; }
+	int32 GetRemainingPotions() const { return Resources.RemainingPotions; }
 	UFUNCTION(BlueprintPure, Category="Combat|Items")
 	float GetPotionHealing() const { return PotionHealing; }
 	UFUNCTION(BlueprintPure, Category="Combat|Commands")
@@ -224,7 +224,6 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UBattleRulesData> ConfiguredRules;
 	UPROPERTY(Transient) TObjectPtr<UBattleRulesData> ActiveRules;
 	UPROPERTY(Transient) TObjectPtr<UCombatItemData> PendingItem;
-	TMap<FName,int32> ItemStocks,EntryItemStocks;
 	UCombatItemData* GetDefaultItem() const;
 	bool ValidateCharacterSetup(APawn* Player) const;
 	bool IsContentFreeTest() const;
@@ -234,27 +233,13 @@ private:
  void StopCounterPresentation();
  bool BeginCharacterCounter();
  UPROPERTY(Transient) TObjectPtr<UCharacterActionData> PendingAction;
- TMap<TWeakObjectPtr<AActor>,TMap<FName,int32>> ActionUses;
- TMap<TWeakObjectPtr<AActor>,TMap<FName,int32>> EntryActionUses;
 	bool ApplyCombatEffect(UCombatantComponent* Target, float Amount, ECombatNumberKind Kind);
 	FOnCombatNumber CombatNumberApplied;
-	struct FParticipantSnapshot
-	{
-		TWeakObjectPtr<AActor> Actor;
-		TWeakObjectPtr<UCombatantComponent> Combatant;
-		FTransform Transform;
-		float Health = 0;
-		bool bAlly = false;
-		FDelegateHandle HealthHandle;
-		FBattleFacingRestore FacingRestore;
-	};
-	TArray<FParticipantSnapshot> Participants;
-	UPROPERTY(Transient) FBattleResult ResultSnapshot;
-	bool bResultReady = false;
-	int32 EntryPotions = 0;
-	bool bEntryPowerStrikeUsed = false;
+	FBattleResources Resources;
+	UPROPERTY(Transient) FBattleEncounterRecord EncounterRecord;
 	FTSTicker::FDelegateHandle ResultCheckTicker;
 	void CaptureParticipant(AActor* Actor, bool bAlly);
+	void HandleParticipantHealthChanged(float Before, float After, bool bAlly);
 	void ClearParticipants();
 	bool TryFinishBattle();
 	bool RestoreEncounter(bool bRetry);
@@ -320,6 +305,7 @@ private:
 		Enemy
 	};
 
+	// 허용된 상태 전이를 먼저 반영하고, 통지 중에는 다른 전이를 막는다.
 	bool TryTransitionTo(EBattleState NewState);
 	void SetPlayerActionPhase(EPlayerActionPhase Phase);
 
@@ -365,9 +351,6 @@ private:
 	EBattleDefenseResult LastDefenseResult = EBattleDefenseResult::None;
 	bool bTransitionInProgress = false;
 	bool bActionInProgress = false;
-	bool bPowerStrikeUsed = false;
-	FBattleFacingRestore PlayerFacingRestore;
-	FBattleFacingRestore EnemyFacingRestore;
 	TWeakObjectPtr<UBattlePresentationComponent> BattlePresentation;
 	int64 BattleSerial = 0;
 	FTimerHandle IntroTimer;
@@ -375,7 +358,6 @@ private:
 	FOnPlayerPhaseChanged PlayerPhaseChanged;
 	FSimpleMulticastDelegate AttackTimingChanged;
 	FRandomStream PatternRandom;
-	int32 RemainingPotions = 0;
 	float PotionHealing = 30.0f;
 	float MeleeDamage = 15.0f;
 	int64 NextPlayerActionId = 0;

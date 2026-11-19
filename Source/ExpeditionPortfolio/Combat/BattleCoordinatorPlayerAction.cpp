@@ -87,13 +87,13 @@ bool UBattleCoordinator::CanRequestPlayerCommand(const EBattlePlayerCommand Comm
 	case EBattlePlayerCommand::MeleeAttack:
 		return true;
 	case EBattlePlayerCommand::UsePotion:
-		if (RemainingPotions<=0) { return false; }
+		if (Resources.RemainingPotions<=0) { return false; }
 		if (CanHealAlly(ActivePlayerPawn.Get())) { return true; }
 		for (const auto& Ally:BattleAllies) { if (CanHealAlly(Ally.Get())) { return true; } }
 		return false;
 
 	case EBattlePlayerCommand::PowerStrike:
-		return !bPowerStrikeUsed;
+		return !Resources.bPowerStrikeUsed;
 
 	default:
 		return false;
@@ -122,7 +122,7 @@ bool UBattleCoordinator::RequestPlayerCommand(const EBattlePlayerCommand Command
 		return false;
 	}
 
-	if (!GetCharacterActions() && Command == EBattlePlayerCommand::PowerStrike && bPowerStrikeUsed)
+	if (!GetCharacterActions() && Command == EBattlePlayerCommand::PowerStrike && Resources.bPowerStrikeUsed)
 	{
 		LogRejectedCommand(TEXT("RequestPlayerCommand"), TEXT("PowerStrike has already been used in this battle"));
 		return false;
@@ -188,8 +188,8 @@ bool UBattleCoordinator::ExecutePlayerCommand(const EBattlePlayerCommand Command
 	PlayerAction.Action = Action;
 	PlayerAction.TargetScope = Scope;
 	PlayerAction.Targets = MoveTemp(TargetsForAction);
-	if (Action) { ++ActionUses.FindOrAdd(ActivePlayerPawn.Get()).FindOrAdd(Action->ActionId); }
-	else if (Command == EBattlePlayerCommand::PowerStrike) { bPowerStrikeUsed = true; }
+	if (Action) { ++Resources.ActionUses.FindOrAdd(ActivePlayerPawn.Get()).FindOrAdd(Action->ActionId); }
+	else if (Command == EBattlePlayerCommand::PowerStrike) { Resources.bPowerStrikeUsed = true; }
 
 	PlayerAction.Id = ++NextPlayerActionId;
 	PlayerAction.QTESessionId = 0;
@@ -200,8 +200,8 @@ bool UBattleCoordinator::ExecutePlayerCommand(const EBattlePlayerCommand Command
 	PlayerAction.Item = Item;
 	if (Item)
 	{
-		--ItemStocks.FindChecked(Item->ItemId);
-		RemainingPotions = GetRemainingItems(GetDefaultItem());
+		--Resources.ItemStocks.FindChecked(Item->ItemId);
+		Resources.RemainingPotions = GetRemainingItems(GetDefaultItem());
 	}
 	PlayerAction.EffectAmount = Amount;
 	PlayerAction.bHitApplied = false;
@@ -418,7 +418,7 @@ int32 UBattleCoordinator::GetRemainingActionUses(UCharacterActionData* Action) c
 {
  if (!Action) { return 0; }
  if (Action->UsesPerEncounter==0) { return -1; }
- const auto* Uses=ActionUses.Find(ActivePlayerPawn.Get());
+ const auto* Uses=Resources.ActionUses.Find(ActivePlayerPawn.Get());
  return FMath::Max(0,Action->UsesPerEncounter-(Uses?Uses->FindRef(Action->ActionId):0));
 }
 
@@ -426,7 +426,7 @@ bool UBattleCoordinator::IsActionExhausted(UCharacterActionData* Action) const
 { return Action && Action->UsesPerEncounter>0 && GetRemainingActionUses(Action)==0; }
 
 bool UBattleCoordinator::IsCommandExhausted(EBattlePlayerCommand Command) const
-{ return GetCharacterActions()?IsActionExhausted(ResolveCommandAction(Command)):IsContentFreeTest() && Command==EBattlePlayerCommand::PowerStrike && bPowerStrikeUsed; }
+{ return GetCharacterActions()?IsActionExhausted(ResolveCommandAction(Command)):IsContentFreeTest() && Command==EBattlePlayerCommand::PowerStrike && Resources.bPowerStrikeUsed; }
 
 UActorComponent* UBattleCoordinator::FindActionExecutor(UCharacterActionData* Action) const
 {
@@ -475,7 +475,7 @@ UCombatItemData* UBattleCoordinator::GetDefaultItem() const
 { return ActiveRules && !ActiveRules->InitialItems.IsEmpty()?ActiveRules->InitialItems[0].Item.Get():nullptr; }
 
 int32 UBattleCoordinator::GetRemainingItems(UCombatItemData* Item) const
-{ return Item?ItemStocks.FindRef(Item->ItemId):0; }
+{ return Item?Resources.ItemStocks.FindRef(Item->ItemId):0; }
 
 bool UBattleCoordinator::CanUseItem(UCombatItemData* Item) const
 {

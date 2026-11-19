@@ -377,8 +377,7 @@ bool UBattleCoordinator::ResolveDefenseOutcome(const EBattleDefenseResult Result
 	}
 	if (bLastHit && EnemyAction.bAllHitsParried && !StartParryCounter()) { ReturnToExploration(); return false; }
 	SetDefenseResult(Result);
-	if (Result==EBattleDefenseResult::ParrySuccess) { ++ResultSnapshot.SuccessfulParries; }
-	if (Result==EBattleDefenseResult::DodgeSuccess) { ++ResultSnapshot.SuccessfulDodges; }
+	EncounterRecord.RecordDefense(Result);
 	UE_LOG(LogBattleCoordinator,Log,TEXT("Enemy hit resolved: Id=%lld Hit=%d/%d Result=%s"),EnemyAction.Id,EnemyAction.HitIndex+1,EnemyAction.Pattern.Hits.Num(),*UEnum::GetValueAsString(Result));
 	if (TryFinishBattle()) { return true; }
 	if (!bLastHit)

@@ -57,7 +57,7 @@ bool FAreaActionRulesTest::RunTest(const FString& Parameters)
 			TestEqual(TEXT("One number per living enemy"),Numbers,2);
 			TestFalse(TEXT("Hit delegate cannot reenter batch"),Reentered);
 			TestFalse(TEXT("No partial-batch victory"),FinishedTooEarly);
-			const auto* CasterUses=Battle->ActionUses.Find(Player);
+			const auto* CasterUses=Battle->Resources.ActionUses.Find(Player);
 			TestEqual(TEXT("One use for entire batch belongs to caster"),CasterUses?CasterUses->FindRef(Area->ActionId):0,1);
 			TestEqual(TEXT("Dead target remains excluded"),DeadHP->GetCurrentHealth(),0.f);
 			TestEqual(TEXT("Other encounters untouched"),OutsideHP->GetCurrentHealth(),100.f);

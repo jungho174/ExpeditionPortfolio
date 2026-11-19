@@ -73,6 +73,7 @@ bool UBattleCoordinator::SetTurnParticipants(AActor* Actor, bool bAllyTurn)
 	return true;
 }
 
+// 전멸 여부를 먼저 확인한 뒤, 쓰러진 참가자를 건너뛰고 다음 행동자를 고른다.
 bool UBattleCoordinator::AdvanceCombatantTurn()
 {
 	if (TryFinishBattle()) { return true; }
