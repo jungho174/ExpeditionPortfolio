@@ -110,7 +110,7 @@ bool UBattleCoordinator::RequestBattleStart(AActor* EncounterSource, APawn* Play
 bool UBattleCoordinator::RequestGroupBattleStart(AActor* EncounterSource, APawn* PlayerPawn, const TArray<AActor*>& Enemies, const TArray<APawn*>& AdditionalAllies)
 {
 	AActor* EnemyActor = Enemies.IsEmpty() ? nullptr : Enemies[0];
-	if (bTransitionInProgress || bActionInProgress)
+	if (IsBattleOperationBusy())
 	{
 		LogRejectedCommand(TEXT("RequestBattleStart"), TEXT("another battle operation is in progress"));
 		return false;
@@ -285,91 +285,10 @@ bool UBattleCoordinator::RequestGroupBattleStart(AActor* EncounterSource, APawn*
 
 void UBattleCoordinator::NotifyBattleIntroFinished(int64 BattleId)
 {
-	if (BattleId != BattleSerial || CurrentState != EBattleState::BattleIntro || bTransitionInProgress || bActionInProgress) { return; }
+	if (BattleId != BattleSerial || CurrentState != EBattleState::BattleIntro || IsBattleOperationBusy()) { return; }
 	GetWorld()->GetTimerManager().ClearTimer(IntroTimer);
 	if (!HasValidActiveBattle()) { ReturnToExploration(); return; }
 	TryTransitionTo(EBattleState::PlayerCommand);
-}
-
-bool UBattleCoordinator::RequestParry()
-{
-	return RequestDefenseCommand(EBattleDefenseCommand::Parry);
-}
-
-bool UBattleCoordinator::RequestDodge()
-{
-	return RequestDefenseCommand(EBattleDefenseCommand::Dodge);
-}
-
-bool UBattleCoordinator::CanRequestDefenseCommand(const EBattleDefenseCommand Command) const
-{
-	if (CurrentState != EBattleState::DefenseWindow || !HasValidActiveBattle())
-	{
-		return false;
-	}
-
-	return !bEnemyHitResolved && PendingDefenseResult == EBattleDefenseResult::None
-		&& GetEnemyHitTimeRemaining() > 0.0f
-		&& (Command == EBattleDefenseCommand::Parry || Command == EBattleDefenseCommand::Dodge);
-}
-
-float UBattleCoordinator::GetEnemyHitTimeRemaining() const
-{
-	return GetWorld() && ActiveEnemyActionId && !bEnemyHitResolved
-		? FMath::Max(0.0f, GetWorld()->GetTimerManager().GetTimerRemaining(DefenseWindowTimerHandle)) : 0.0f;
-}
-
-bool UBattleCoordinator::RequestDefenseCommand(const EBattleDefenseCommand Command)
-{
-	if (bTransitionInProgress || bActionInProgress)
-	{
-		LogRejectedCommand(TEXT("RequestDefenseCommand"), TEXT("another battle operation is in progress"));
-		return false;
-	}
-
-	if (CurrentState != EBattleState::DefenseWindow)
-	{
-		LogRejectedCommand(TEXT("RequestDefenseCommand"), TEXT("current state is not DefenseWindow"));
-		return false;
-	}
-
-	if (!HasValidActiveBattle())
-	{
-		LogRejectedCommand(TEXT("RequestDefenseCommand"), TEXT("active battle participants are invalid or defeated"));
-		ReturnToExploration();
-		return false;
-	}
-
-	if (Command != EBattleDefenseCommand::Parry && Command != EBattleDefenseCommand::Dodge)
-	{
-		LogRejectedCommand(TEXT("RequestDefenseCommand"), TEXT("the requested defense command is not supported"));
-		return false;
-	}
-
-	UWorld* World = GetWorld();
-	if (World == nullptr)
-	{
-		ReturnToExploration();
-		return false;
-	}
-
-	const float Remaining = GetEnemyHitTimeRemaining();
-	if (Remaining <= 0.0f || bEnemyHitResolved || PendingDefenseResult != EBattleDefenseResult::None)
-	{
-		LogRejectedCommand(TEXT("RequestDefenseCommand"), TEXT("hit already resolved or defense input already submitted"));
-		return false;
-	}
-
-	PendingDefenseResult = Command == EBattleDefenseCommand::Dodge
-		? EBattleDefenseResult::DodgeSuccess
-		: Remaining <= ActiveEnemyPattern.ParrySuccessDuration + KINDA_SMALL_NUMBER
-			? EBattleDefenseResult::ParrySuccess
-			: EBattleDefenseResult::Failed;
-	UE_LOG(LogBattleCoordinator, Log, TEXT("Defense input buffered: Remaining=%.3f Result=%s"),
-		Remaining, *UEnum::GetValueAsString(PendingDefenseResult));
-	TGuardValue<bool> ActionGuard(bActionInProgress, true);
-	DefenseCommandAccepted.Broadcast(Command, Remaining);
-	return true;
 }
 
 bool UBattleCoordinator::ApplyCombatEffect(UCombatantComponent* Target, float Amount, ECombatNumberKind Kind)
@@ -466,374 +385,16 @@ bool UBattleCoordinator::HasValidActiveBattle() const
 		&& !EnemyCombatant->IsDefeated();
 }
 
-FEnemyAttackPatternSnapshot UBattleCoordinator::GetActiveEnemyPattern() const
-{
-	FEnemyAttackPatternSnapshot Result = ActiveEnemyPattern;
-	if (!bHasActiveEnemyPattern)
-	{
-		Result.PatternId = NAME_None;
-		Result.DisplayName = FText::GetEmpty();
-	}
-	return Result;
-}
-
-void UBattleCoordinator::ClearEnemyPattern()
-{
-	bHasActiveEnemyPattern = false;
-	ActiveEnemyPattern = FEnemyAttackPatternSnapshot();
-}
-
-void UBattleCoordinator::SelectEnemyPattern()
-{
-	const auto LogInvalidPattern = [this](const UEnemyAttackPatternData* Pattern, const FString& Reason)
-	{
-		UE_LOG(LogBattleCoordinator, Warning, TEXT("Enemy '%s': skipping pattern '%s': %s"),
-			*GetNameSafe(ActiveEnemyActor.Get()), *GetNameSafe(Pattern), *Reason);
-	};
-	// 이번 턴에 검증한 타격 시각과 피해량을 공격이 끝날 때까지 사용한다.
-	const UEnemyAttackPatternData* Selected = UEnemyAttackPatternData::SelectPattern(
-		EnemyCombatant->EnemyAttackPatterns, PatternRandom, &ActiveEnemyPattern, LogInvalidPattern);
-	bHasActiveEnemyPattern = true;
-	if (!Selected)
-	{
-		UE_LOG(LogBattleCoordinator, Warning,
-			TEXT("Enemy '%s': no selectable enemy patterns (empty, invalid, or zero weights); using BasicAttack fallback."),
-			*GetNameSafe(ActiveEnemyActor.Get()));
-	}
-	UE_LOG(LogBattleCoordinator, Log, TEXT("Enemy pattern selected: %s, Damage=%.3f Telegraph=%.3f Defense=%.3f Parry=%.3f"),
-		*ActiveEnemyPattern.PatternId.ToString(), ActiveEnemyPattern.Damage, ActiveEnemyPattern.TelegraphDuration,
-		ActiveEnemyPattern.DefenseWindowDuration, ActiveEnemyPattern.ParrySuccessDuration);
-}
-
-bool UBattleCoordinator::StartEnemyTelegraph()
-{
-	if (!HasValidActiveBattle())
-	{
-		ReturnToExploration();
-		return false;
-	}
-
-	UWorld* World = GetWorld();
-	if (World == nullptr)
-	{
-		ReturnToExploration();
-		return false;
-	}
-
-	SetDefenseResult(EBattleDefenseResult::None);
-	World->GetTimerManager().SetTimer(
-		EnemyTelegraphTimerHandle,
-		this,
-		&ThisClass::HandleEnemyTelegraphFinished,
-		ActiveEnemyPattern.TelegraphDuration,
-		false);
-	return true;
-}
-
-void UBattleCoordinator::HandleEnemyTelegraphFinished()
-{
-	EnemyTelegraphTimerHandle.Invalidate();
-	if (CurrentState!=EBattleState::EnemyTelegraph || !HasValidActiveBattle()) { ReturnToExploration(); return; }
-	if (!TryTransitionTo(EBattleState::EnemyAction)) { ReturnToExploration(); return; }
-	ActiveEnemyActionId=++NextEnemyActionId;
-	EnemyHitIndex=0; bAllEnemyHitsParried=true; bEnemyAttackStarted=false;
-	PendingDefenseResult=EBattleDefenseResult::None; bEnemyHitResolved=false; bEnemyHitNotifyReceived=false;
-	if (ActiveEnemyPattern.Hits.IsEmpty())
-	{
-		FEnemyAttackHit Hit; Hit.Damage=ActiveEnemyPattern.Damage; Hit.HitTime=ActiveEnemyPattern.HitTime;
-		Hit.DefenseWindowDuration=ActiveEnemyPattern.DefenseWindowDuration; Hit.ParrySuccessDuration=ActiveEnemyPattern.ParrySuccessDuration;
-		Hit.HitTimeOffset=ActiveEnemyPattern.HitTimeOffset; ActiveEnemyPattern.Hits.Add(Hit);
-	}
-	EnemyPresentation=ActiveEnemyActor->FindComponentByClass<UEnemyAttackPresentationComponent>();
-	bWaitingForEnemyAnimation=ActiveEnemyPattern.AttackMontage && EnemyPresentation.IsValid();
-	if (bWaitingForEnemyAnimation)
-	{
-		bWaitingForEnemyAnimation=EnemyPresentation->BeginAttack(ActiveEnemyPattern.AttackMontage,ActiveEnemyActionId,ActivePlayerPawn.Get());
-		if (!bWaitingForEnemyAnimation && EnemyPresentation->WasTravelBlocked())
-		{
-			NotifyEnemyActionFinished(ActiveEnemyActionId,true);return;
-		}
-	}
-	if (!bWaitingForEnemyAnimation) { NotifyEnemyAttackStarted(ActiveEnemyActionId); }
-	if (bWaitingForEnemyAnimation)
-	{
-		GetWorld()->GetTimerManager().SetTimer(EnemyActionTimeoutTimerHandle,
-			FTimerDelegate::CreateUObject(this,&ThisClass::HandleEnemyActionTimeout,ActiveEnemyActionId),
-			EnemyPresentation->GetExpectedDuration(ActiveEnemyPattern.AttackMontage)+1.f,false);
-	}
-	UE_LOG(LogBattleCoordinator,Log,TEXT("Enemy combo started: Id=%lld Hits=%d"),ActiveEnemyActionId,ActiveEnemyPattern.Hits.Num());
-}
-
-void UBattleCoordinator::NotifyEnemyAttackStarted(const int64 ActionId)
-{
-	if (!ActionId || ActionId!=ActiveEnemyActionId || bEnemyAttackStarted || CurrentState!=EBattleState::EnemyAction) { return; }
-	bEnemyAttackStarted=true;
-	EnemyAttackStartedAt=GetWorld()->GetTimeSeconds();
-	ScheduleEnemyHit();
-}
-
-void UBattleCoordinator::ScheduleEnemyHit()
-{
-	if (!ActiveEnemyPattern.Hits.IsValidIndex(EnemyHitIndex) || !ActiveEnemyActionId) { return; }
-	const auto& Hit=ActiveEnemyPattern.Hits[EnemyHitIndex];
-	ActiveEnemyPattern.Damage=Hit.Damage; ActiveEnemyPattern.HitTime=Hit.HitTime;
-	ActiveEnemyPattern.DefenseWindowDuration=Hit.DefenseWindowDuration;
-	ActiveEnemyPattern.ParrySuccessDuration=Hit.ParrySuccessDuration; ActiveEnemyPattern.HitTimeOffset=Hit.HitTimeOffset;
-	PendingDefenseResult=EBattleDefenseResult::None; bEnemyHitResolved=false; bEnemyHitNotifyReceived=false;
-	auto& Timers=GetWorld()->GetTimerManager();
-	Timers.ClearTimer(DefenseWindowTimerHandle); Timers.ClearTimer(EnemyWindowOpenTimerHandle);
-	const float Delay=FMath::Max(.001f,EnemyAttackStartedAt+Hit.HitTime-GetWorld()->GetTimeSeconds());
-	Timers.SetTimer(DefenseWindowTimerHandle,this,&ThisClass::HandleDefenseWindowExpired,Delay,false);
-	if (Delay>Hit.DefenseWindowDuration+KINDA_SMALL_NUMBER)
-	{
-		Timers.SetTimer(EnemyWindowOpenTimerHandle,this,&ThisClass::OpenEnemyDefenseWindow,Delay-Hit.DefenseWindowDuration,false);
-	}
-	else { OpenEnemyDefenseWindow(); }
-}
-
-void UBattleCoordinator::OpenEnemyDefenseWindow()
-{
-	if (CurrentState != EBattleState::EnemyAction || !ActiveEnemyActionId) { return; }
-	if (!HasValidActiveBattle()) { ReturnToExploration(); return; }
-	TryTransitionTo(EBattleState::DefenseWindow);
-}
-
-void UBattleCoordinator::HandleDefenseWindowExpired()
-{
-	if (!ActiveEnemyActionId || bEnemyHitResolved) { return; }
-	if (!HasValidActiveBattle())
-	{
-		ReturnToExploration();
-		return;
-	}
-	if (CurrentState == EBattleState::EnemyAction) { OpenEnemyDefenseWindow(); }
-	GetWorld()->GetTimerManager().ClearTimer(DefenseWindowTimerHandle);
-	TGuardValue<bool> ActionGuard(bActionInProgress, true);
-	ResolveDefenseOutcome(PendingDefenseResult == EBattleDefenseResult::None ? EBattleDefenseResult::NoInput : PendingDefenseResult);
-}
-
-bool UBattleCoordinator::NotifyEnemyActionHit(const int64 ActionId, const int32 HitIndex)
-{
-	if (!ActionId || ActionId != ActiveEnemyActionId || HitIndex!=EnemyHitIndex || bEnemyHitResolved || bEnemyHitNotifyReceived
-		|| bActionInProgress || bTransitionInProgress) { return false; }
-	bEnemyHitNotifyReceived = true;
-	// Offsets use the snapshotted timeline; the unshifted marker must not override them.
-	if (FMath::IsNearlyZero(ActiveEnemyPattern.HitTimeOffset) && GetEnemyHitTimeRemaining() <= 0.035f)
-	{
-		HandleDefenseWindowExpired();
-	}
-	return true;
-}
-
-bool UBattleCoordinator::NotifyEnemyActionFinished(const int64 ActionId, const bool bInterrupted)
-{
-	if (!ActionId || ActionId != ActiveEnemyActionId || bActionInProgress || bTransitionInProgress
-		|| (CurrentState != EBattleState::EnemyAction && CurrentState != EBattleState::DefenseWindow)) { return false; }
-	if (!bInterrupted && !bEnemyHitResolved && ActiveEnemyPattern.Hits.Num()==1)
-	{
-		UE_LOG(LogBattleCoordinator, Warning, TEXT("Enemy hit marker/timer missing; resolving once at normal completion."));
-		HandleDefenseWindowExpired();
-		if (ActiveEnemyActionId != ActionId || CurrentState==EBattleState::Victory || CurrentState==EBattleState::Defeat) { return true; }
-	}
-	TGuardValue<bool> ActionGuard(bActionInProgress, true);
-	if (!bEnemyHitResolved) { bAllEnemyHitsParried=false; }
-	bWaitingForEnemyAnimation = false;
-	return FinishEnemyAction();
-}
-
-void UBattleCoordinator::HandleEnemyActionTimeout(const int64 ActionId)
-{
-	if (ActionId != ActiveEnemyActionId || !ActionId) { return; }
-	UE_LOG(LogBattleCoordinator, Warning, TEXT("Enemy animation completion timed out; cancelling remaining attack."));
-	NotifyEnemyActionFinished(ActionId, true);
-}
-
-bool UBattleCoordinator::StartParryCounter()
-{
- CounterPresentation.Reset();
- if (const auto* Profile=GetCharacterActions())
- {
-  ActiveCounterAction=Profile->ParryCounter;
-  if (!ActiveCounterAction || !ActiveCounterAction->IsValidAction()) { return false; }
-  CounterPresentation=FindActionExecutor(ActiveCounterAction);
-  if (!CounterPresentation.IsValid()) { return false; }
-  const float Duration=ICharacterActionExecutor::Execute_GetCharacterActionDuration(CounterPresentation.Get(),ActiveCounterAction,true);
-  if (!FMath::IsFinite(Duration) || Duration<=0 || Duration>60) { CounterPresentation.Reset(); return false; }
-  PendingCounterDamage=ActiveCounterAction->BaseDamage; bParryCounterActive=true; bParryCounterHitApplied=false;
-  if (EnemyPresentation.IsValid()) { EnemyPresentation->HoldForCounter(); }
-  if (BattlePresentation.IsValid() && BattlePresentation->BeginParryFeedback(ActiveEnemyActionId,true)) { return true; }
-  return BeginCharacterCounter();
- }
- if (!IsContentFreeTest()) { return false; }
-#if WITH_DEV_AUTOMATION_TESTS
- TInlineComponentArray<UActorComponent*> Components(ActivePlayerPawn.Get());
-	for (UActorComponent* Component:Components)
-	{
-		if (!Component->GetClass()->ImplementsInterface(UParryCounterProvider::StaticClass())) { continue; }
-		if (!PlayerCombatant->CounterProviderComponentName.IsNone() && Component->GetFName()!=PlayerCombatant->CounterProviderComponentName) { continue; }
-		const float Duration=IParryCounterProvider::Execute_GetCounterActionDuration(Component);
-		const float Damage=IParryCounterProvider::Execute_GetCounterActionDamage(Component);
-		if (!FMath::IsFinite(Duration) || Duration<=0 || Duration>20 || !FMath::IsFinite(Damage) || Damage<0) { continue; }
-		if (EnemyPresentation.IsValid()) { EnemyPresentation->HoldForCounter(); }
-		CounterPresentation=Component; PendingCounterDamage=Damage; bParryCounterActive=true; bParryCounterHitApplied=false;
-		if (IParryCounterProvider::Execute_StartCounterAction(Component,ActiveEnemyActionId,ActiveEnemyActor.Get()))
-		{
-			GetWorld()->GetTimerManager().SetTimer(ParryCounterTimerHandle,
-				FTimerDelegate::CreateUObject(this,&ThisClass::HandleParryCounterTimeout,ActiveEnemyActionId),Duration+1.f,false);
-			return true;
-		}
-		bParryCounterActive=false;
-		IParryCounterProvider::Execute_StopCounterAction(Component); CounterPresentation.Reset();
-	}
-	// Content-free participants still work in logic tests. No particular spell is implied.
-	const bool Applied=ApplyCombatEffect(EnemyCombatant.Get(),ParryCounterDamage,ECombatNumberKind::Damage);
-	if (EnemyPresentation.IsValid() && EnemyPresentation->IsHeldForCounter()) { bWaitingForEnemyAnimation=EnemyPresentation->ReturnAfterCounter(); }
-	return Applied;
-#else
- return false;
-#endif
-}
-
-bool UBattleCoordinator::ResolveDefenseOutcome(const EBattleDefenseResult Result)
-{
-	if (CurrentState!=EBattleState::DefenseWindow || bEnemyHitResolved) { return false; }
-	bEnemyHitResolved=true;
-	bAllEnemyHitsParried &= Result==EBattleDefenseResult::ParrySuccess;
-	const bool bLastHit=EnemyHitIndex+1>=ActiveEnemyPattern.Hits.Num();
-	if (Result==EBattleDefenseResult::Failed || Result==EBattleDefenseResult::NoInput)
-	{
-		if (!ApplyCombatEffect(PlayerCombatant.Get(),ActiveEnemyPattern.Damage,ECombatNumberKind::Damage)) { ReturnToExploration(); return false; }
-	}
-	if (EnemyPresentation.IsValid() && ActiveEnemyPattern.Hits.IsValidIndex(EnemyHitIndex))
-	{
-		EnemyPresentation->PlayHitFeedback(ActiveEnemyPattern.Hits[EnemyHitIndex],Result);
-	}
-	if (bLastHit && bAllEnemyHitsParried && !StartParryCounter()) { ReturnToExploration(); return false; }
-	SetDefenseResult(Result);
-	if (Result==EBattleDefenseResult::ParrySuccess) { ++ResultSnapshot.SuccessfulParries; }
-	if (Result==EBattleDefenseResult::DodgeSuccess) { ++ResultSnapshot.SuccessfulDodges; }
-	UE_LOG(LogBattleCoordinator,Log,TEXT("Enemy hit resolved: Id=%lld Hit=%d/%d Result=%s"),ActiveEnemyActionId,EnemyHitIndex+1,ActiveEnemyPattern.Hits.Num(),*UEnum::GetValueAsString(Result));
-	if (TryFinishBattle()) { return true; }
-	if (!bLastHit)
-	{
-		if (PlayerCombatant->IsDefeated()) { bWaitingForEnemyAnimation=false; return FinishEnemyAction(); }
-	}
-	if (!bLastHit)
-	{
-		++EnemyHitIndex;
-		if (!TryTransitionTo(EBattleState::EnemyAction)) { ReturnToExploration(); return false; }
-		ScheduleEnemyHit();
-		return true;
-	}
-	return bWaitingForEnemyAnimation || bParryCounterActive ? true : FinishEnemyAction();
-}
-
-bool UBattleCoordinator::NotifyParryCounterHit(const int64 ActionId)
-{
-	if (!bParryCounterActive || !ActionId || ActionId != ActiveEnemyActionId || bParryCounterHitApplied
-		|| CurrentState != EBattleState::DefenseWindow || bActionInProgress || bTransitionInProgress) { return false; }
-	if (!HasValidActiveBattle()) { ReturnToExploration(); return false; }
-	TGuardValue<bool> Guard(bActionInProgress, true);
-	bParryCounterHitApplied = true;
-	// Stop the enemy's recovery before the counter's additive hit reaction is played.
-	if (EnemyPresentation.IsValid() && !EnemyPresentation->IsHeldForCounter()) { EnemyPresentation->StopPresentation(); bWaitingForEnemyAnimation=false; }
-	if (!ApplyCombatEffect(EnemyCombatant.Get(), PendingCounterDamage, ECombatNumberKind::Damage)) { ReturnToExploration(); return false; }
-	// Death cancels the attack montage; it will no longer send an attack-finished callback.
-	if (EnemyCombatant->IsDefeated()) { bWaitingForEnemyAnimation=false; }
-	UE_LOG(LogBattleCoordinator, Log, TEXT("Parry counter impact: Id=%lld Damage=%.1f"), ActionId, PendingCounterDamage);
-	TryFinishBattle();
-	return true;
-}
-
-bool UBattleCoordinator::NotifyParryCounterFinished(const int64 ActionId, const bool bInterrupted)
-{
-	if (!bParryCounterActive || !ActionId || ActionId != ActiveEnemyActionId
-		|| CurrentState != EBattleState::DefenseWindow || bActionInProgress || bTransitionInProgress) { return false; }
-	TGuardValue<bool> Guard(bActionInProgress, true);
-	bParryCounterActive = false;
-	GetWorld()->GetTimerManager().ClearTimer(ParryCounterTimerHandle);
-	StopCounterPresentation();
-	CounterPresentation.Reset();
-	UE_LOG(LogBattleCoordinator, Log, TEXT("Parry counter finished: Id=%lld Interrupted=%d"), ActionId, bInterrupted);
-	if (EnemyPresentation.IsValid() && EnemyPresentation->IsHeldForCounter()) { bWaitingForEnemyAnimation=EnemyPresentation->ReturnAfterCounter(); }
-	return bWaitingForEnemyAnimation ? true : FinishEnemyAction();
-}
-
-void UBattleCoordinator::HandleParryCounterTimeout(const int64 ActionId)
-{
-	if (bParryCounterActive && ActionId == ActiveEnemyActionId)
-	{
-		UE_LOG(LogBattleCoordinator, Warning, TEXT("Parry counter timed out; cancelling remaining counter."));
-		NotifyParryCounterFinished(ActionId, true);
-	}
-}
-
-bool UBattleCoordinator::FinishEnemyAction()
-{
-	if (CurrentState==EBattleState::Victory || CurrentState==EBattleState::Defeat) { return true; }
-	if (bParryCounterActive) { return true; }
-	if (!ActivePlayerPawn.IsValid() || !ActiveEnemyActor.IsValid() || !PlayerCombatant.IsValid() || !EnemyCombatant.IsValid())
-	{
-		ReturnToExploration();
-		return false;
-	}
-	ClearEnemyAction();
-	ClearEnemyPattern();
-	if (!TryTransitionTo(EBattleState::TurnEnd))
-	{
-		ReturnToExploration();
-		return false;
-	}
-
-	return ResolveTurnEnd(ECompletedAction::Enemy);
-}
-
-void UBattleCoordinator::ClearEnemyAction()
-{
-	if (BattlePresentation.IsValid()) { BattlePresentation->ReleaseParryFeedback(); }
-	bParryCounterActive = false;
-	bParryCounterHitApplied = false;
-	StopCounterPresentation();
-	CounterPresentation.Reset();
-	ActiveEnemyActionId = 0;
-	EnemyHitIndex=0; bAllEnemyHitsParried=true; bEnemyAttackStarted=false;
-	if (GetWorld())
-	{
-		GetWorld()->GetTimerManager().ClearTimer(DefenseWindowTimerHandle);
-		GetWorld()->GetTimerManager().ClearTimer(EnemyWindowOpenTimerHandle);
-		GetWorld()->GetTimerManager().ClearTimer(EnemyActionTimeoutTimerHandle);
-		GetWorld()->GetTimerManager().ClearTimer(ParryCounterTimerHandle);
-	}
-	if (EnemyPresentation.IsValid()) { EnemyPresentation->StopPresentation(); }
-	EnemyPresentation.Reset();
-	PendingDefenseResult = EBattleDefenseResult::None;
-	bEnemyHitResolved = false;
-	bEnemyHitNotifyReceived = false;
-	bWaitingForEnemyAnimation = false;
-}
-
-void UBattleCoordinator::SetDefenseResult(const EBattleDefenseResult Result)
-{
-	if (LastDefenseResult == Result && Result==EBattleDefenseResult::None)
-	{
-		return;
-	}
-
-	LastDefenseResult = Result;
-	DefenseResultChanged.Broadcast(Result);
-	DefenseResultChangedBlueprint.Broadcast(Result);
-}
-
 void UBattleCoordinator::ClearBattleTimers()
 {
 	if (UWorld* World = GetWorld())
 	{
-		World->GetTimerManager().ClearTimer(EnemyTelegraphTimerHandle);
-		World->GetTimerManager().ClearTimer(DefenseWindowTimerHandle);
+		World->GetTimerManager().ClearTimer(EnemyAction.TelegraphTimer);
+		World->GetTimerManager().ClearTimer(EnemyAction.HitTimer);
 		World->GetTimerManager().ClearTimer(TurnTransitionTimer);
 	}
-	EnemyTelegraphTimerHandle.Invalidate();
-	DefenseWindowTimerHandle.Invalidate();
+	EnemyAction.TelegraphTimer.Invalidate();
+	EnemyAction.HitTimer.Invalidate();
 }
 
 bool UBattleCoordinator::ResolveTurnEnd(const ECompletedAction CompletedAction, bool bAfterDelay)
@@ -915,7 +476,7 @@ void UBattleCoordinator::ClearBattleContext()
 	EnemyFacingRestore.Restore();
 	ClearPlayerAction();
 	ClearEnemyAction();
-	ActiveCounterAction=nullptr;
+	EnemyAction.CounterAction=nullptr;
 	ClearBattleTimers();
 	ClearEnemyPattern();
 	ActiveEncounterSource.Reset();
@@ -946,7 +507,7 @@ void UBattleCoordinator::CaptureParticipant(AActor* Actor, bool bAlly)
 		{
 			ResultCheckTicker=FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this,[this](float)
 			{
-				if (bActionInProgress || bTransitionInProgress) { return true; }
+				if (IsBattleOperationBusy()) { return true; }
 				ResultCheckTicker.Reset();
 				HandleParticipantDefeat();
 				return false;
@@ -992,7 +553,7 @@ bool UBattleCoordinator::TryFinishBattle()
 	ClearBattleTimers();
 	auto& Timers=GetWorld()->GetTimerManager();
 	Timers.ClearTimer(IntroTimer); Timers.ClearTimer(TargetConfirmationTimer); Timers.ClearTimer(PlayerAction.TimeoutTimer);
-	Timers.ClearTimer(EnemyWindowOpenTimerHandle); Timers.ClearTimer(EnemyActionTimeoutTimerHandle); Timers.ClearTimer(ParryCounterTimerHandle);
+	Timers.ClearTimer(EnemyAction.WindowOpenTimer); Timers.ClearTimer(EnemyAction.TimeoutTimer); Timers.ClearTimer(EnemyAction.CounterTimer);
 	GetWorld()->GetSubsystem<UActionQTESubsystem>()->CancelQTE(PlayerAction.QTESessionId);
 	bSelectingTarget=false; bConfirmingTarget=false;
 	if (!TryTransitionTo(bDefeat?EBattleState::Defeat:EBattleState::Victory)) { return false; }
@@ -1013,7 +574,7 @@ void UBattleCoordinator::NotifyResultReady()
 
 bool UBattleCoordinator::ContinueAfterVictory()
 {
-	if (!bResultReady || bActionInProgress || bTransitionInProgress || CurrentState!=EBattleState::Victory) { return false; }
+	if (!bResultReady || IsBattleOperationBusy() || CurrentState!=EBattleState::Victory) { return false; }
 	TGuardValue<bool> ActionGuard(bActionInProgress,true);
 	TWeakObjectPtr<ABattleEncounterTrigger> Trigger=Cast<ABattleEncounterTrigger>(ActiveEncounterSource.Get());
 	TArray<TWeakObjectPtr<AActor>> DefeatedEnemies;
@@ -1041,7 +602,7 @@ bool UBattleCoordinator::RetreatFromBattle() { return RestoreEncounter(false); }
 
 bool UBattleCoordinator::RestoreEncounter(bool bRetry)
 {
-	if (!bResultReady || bActionInProgress || bTransitionInProgress || CurrentState!=EBattleState::Defeat
+	if (!bResultReady || IsBattleOperationBusy() || CurrentState!=EBattleState::Defeat
 		|| !ActivePlayerPawn.IsValid() || !ActiveEnemyActor.IsValid() || !ActiveEncounterSource.IsValid()) { return false; }
 	APawn* Player=ExplorationPlayerPawn.Get();
 	if (!Player) { return false; }
@@ -1092,7 +653,7 @@ void UBattleCoordinator::BroadcastTargetSelection()
 bool UBattleCoordinator::BeginCommandSelection(EBattlePlayerCommand Command)
 {
 	if (Command==EBattlePlayerCommand::UsePotion) { return BeginItemSelection(GetDefaultItem()); }
-	if (bTargetNotification || bSelectingTarget || bActionInProgress || bTransitionInProgress || !CanRequestPlayerCommand(Command)) { return false; }
+	if (bTargetNotification || bSelectingTarget || IsBattleOperationBusy() || !CanRequestPlayerCommand(Command)) { return false; }
 	// Capture only this encounter's living opponents, before the target camera moves.
 	FVector Forward = (ActiveEnemyActor->GetActorLocation() - ActivePlayerPawn->GetActorLocation()).GetSafeNormal2D();
 	TArray<AActor*> Candidates;
@@ -1134,7 +695,7 @@ bool UBattleCoordinator::RegisterBattleAlly(AActor* Ally)
 
 bool UBattleCoordinator::MoveTargetSelection(int32 Direction)
 {
-	if (!bSelectingTarget || bTargetNotification || bActionInProgress || bTransitionInProgress) { return false; }
+	if (!bSelectingTarget || bTargetNotification || IsBattleOperationBusy()) { return false; }
 	if (IsSelectingAllEnemies()) { return false; }
 	if (!HasValidActiveBattle()) { CancelTargetSelection(); ReturnToExploration(); return false; }
 	if (IsItemCommand(PendingCommand))
@@ -1149,7 +710,7 @@ bool UBattleCoordinator::MoveTargetSelection(int32 Direction)
 
 bool UBattleCoordinator::CancelTargetSelection()
 {
-	if (!bSelectingTarget || bTargetNotification || bActionInProgress || bTransitionInProgress) { return false; }
+	if (!bSelectingTarget || bTargetNotification || IsBattleOperationBusy()) { return false; }
 	bSelectingTarget = false;
 	PendingAction=nullptr;PendingItem=nullptr;
 	Targets.Reset();
@@ -1159,7 +720,7 @@ bool UBattleCoordinator::CancelTargetSelection()
 
 bool UBattleCoordinator::ConfirmTargetSelection()
 {
-	if (!bSelectingTarget || bTargetNotification || bActionInProgress || bTransitionInProgress) { return false; }
+	if (!bSelectingTarget || bTargetNotification || IsBattleOperationBusy()) { return false; }
 	if (IsSelectingAllEnemies()) { Targets.Move(0); RefreshAreaPrimaryTarget(); }
 	const bool bPotion=IsItemCommand(PendingCommand);
 	if (!HasValidActiveBattle() || (bPotion ? !CanHealAlly(Targets.Get()) : !IsRegisteredEnemy(Targets.Get())) || !CanRequestPlayerCommand(PendingCommand))
@@ -1203,34 +764,6 @@ void UBattleCoordinator::LogRejectedCommand(const TCHAR* CommandName, const TCHA
 		TEXT("Rejected battle command '%s': %s."),
 		CommandName,
 		Reason);
-}
-
-void UBattleCoordinator::StopCounterPresentation()
-{
- if (!CounterPresentation.IsValid()) { return; }
- if (ActiveCounterAction && CounterPresentation->GetClass()->ImplementsInterface(UCharacterActionExecutor::StaticClass()))
- { ICharacterActionExecutor::Execute_StopCharacterAction(CounterPresentation.Get()); }
- else if (CounterPresentation->GetClass()->ImplementsInterface(UParryCounterProvider::StaticClass()))
- { IParryCounterProvider::Execute_StopCounterAction(CounterPresentation.Get()); }
- ActiveCounterAction=nullptr;
-}
-bool UBattleCoordinator::BeginCharacterCounter()
-{
- if (!bParryCounterActive || !ActiveCounterAction || !CounterPresentation.IsValid()) { return false; }
-	if (BattlePresentation.IsValid()) { BattlePresentation->PresentCounterAction(ActiveCounterAction); }
- if (auto* Defense=ActivePlayerPawn->FindComponentByClass<UDefensePresentationComponent>()) { Defense->StopPresentation(); }
- const float Duration=ICharacterActionExecutor::Execute_GetCharacterActionDuration(CounterPresentation.Get(),ActiveCounterAction,true);
- if (ICharacterActionExecutor::Execute_StartCharacterAction(CounterPresentation.Get(),ActiveCounterAction,ActiveEnemyActionId,ActiveEnemyActor.Get(),true))
- {
-  GetWorld()->GetTimerManager().SetTimer(ParryCounterTimerHandle,FTimerDelegate::CreateUObject(this,&ThisClass::HandleParryCounterTimeout,ActiveEnemyActionId),Duration+1,false);
-  return true;
- }
- bParryCounterActive=false; StopCounterPresentation(); CounterPresentation.Reset(); return false;
-}
-void UBattleCoordinator::NotifyCounterFeedbackFinished(int64 ActionId)
-{
- if (!bParryCounterActive || !ActionId || ActionId!=ActiveEnemyActionId || CurrentState!=EBattleState::DefenseWindow) { return; }
- if (!HasValidActiveBattle() || !BeginCharacterCounter()) { ReturnToExploration(); }
 }
 
 bool UBattleCoordinator::IsContentFreeTest() const

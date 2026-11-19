@@ -299,12 +299,12 @@ bool FParryCounterLifecycleTest::RunTest(const FString& Parameters)
 		auto* PlayerHP = AddCombatantComponent(Player); auto* HP = AddCombatantComponent(Enemy);
 		Battle->RequestBattleStart(World->SpawnActor<AActor>(), Player, Enemy);
 		Battle->RequestPlayerBasicAttack(); AdvanceToDefenseWindow(World);
-		const int64 Id = Battle->ActiveEnemyActionId;
-		World->GetTimerManager().ClearTimer(Battle->DefenseWindowTimerHandle);
-		Battle->bEnemyHitResolved = true;
-		Battle->bParryCounterActive = true;
-		Battle->PendingCounterDamage = 15;
-		Battle->bWaitingForEnemyAnimation = true;
+		const int64 Id = Battle->EnemyAction.Id;
+		World->GetTimerManager().ClearTimer(Battle->EnemyAction.HitTimer);
+		Battle->EnemyAction.bHitResolved = true;
+		Battle->EnemyAction.bCounterActive = true;
+		Battle->EnemyAction.CounterDamage = 15;
+		Battle->EnemyAction.bWaitingForAnimation = true;
 		TestFalse(TEXT("Stale impact rejected"), Battle->NotifyParryCounterHit(Id - 1));
 		TestTrue(TEXT("Enemy completion waits for counter"), Battle->NotifyEnemyActionFinished(Id, false));
 		TestEqual(TEXT("No premature command turn"), Battle->GetCurrentState(), EBattleState::DefenseWindow);

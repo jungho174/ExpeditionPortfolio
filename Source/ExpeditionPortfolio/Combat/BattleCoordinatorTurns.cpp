@@ -112,7 +112,7 @@ void UBattleCoordinator::HandleParticipantDefeat()
 		return;
 	}
 	if ((CurrentState==EBattleState::EnemyTelegraph || CurrentState==EBattleState::EnemyAction || CurrentState==EBattleState::DefenseWindow)
-		&& (bAllyKO || (bEnemyKO && !bParryCounterHitApplied)))
+		&& (bAllyKO || (bEnemyKO && !EnemyAction.bCounterHitApplied)))
 	{
 		ClearBattleTimers();ClearEnemyAction();FinishEnemyAction();
 	}

@@ -33,7 +33,7 @@ bool FEnemyComboLifecycleTest::RunTest(const FString& Parameters)
 		for (float Time:{.6f,1.3f,2.f}) { FEnemyAttackHit Hit; Hit.Damage=10; Hit.FallbackHitTime=Time; Pattern->Hits.Add(Hit); }
 		EnemyHP->EnemyAttackPatterns.Add(Pattern);
 		Battle->RequestBattleStart(World->SpawnActor<AActor>(),Player,Enemy); Battle->RequestPlayerBasicAttack(); AdvanceBattleTime(World, 1.01f);
-		const int64 Id=Battle->ActiveEnemyActionId;
+		const int64 Id=Battle->EnemyAction.Id;
 		TestEqual(TEXT("Three distinct hits copied"),Battle->GetEnemyHitCount(),3);
 		TestFalse(TEXT("Future indexed marker cannot hit current window"),Battle->NotifyEnemyActionHit(Id,1));
 		if (Case==6) { Pattern->Hits[1].Damage=99; Pattern->Hits[1].FallbackHitTime=20; }
@@ -206,9 +206,9 @@ bool FBattleCoordinatorEnemyActionLifecycleTest::RunTest(const FString& Paramete
 		Battle->RequestBattleStart(Encounter, Player, Enemy);
 		Battle->RequestPlayerBasicAttack();
 		AdvanceToDefenseWindow(World);
-		const int64 Id = Battle->ActiveEnemyActionId;
+		const int64 Id = Battle->EnemyAction.Id;
 		// Exercise the animation callback boundary independently of rendering.
-		Battle->bWaitingForEnemyAnimation = true;
+		Battle->EnemyAction.bWaitingForAnimation = true;
 		TestFalse(TEXT("Stale hit rejected"), Battle->NotifyEnemyActionHit(Id - 1));
 		TestFalse(TEXT("Stale completion rejected"), Battle->NotifyEnemyActionFinished(Id - 1, false));
 		if (Case == 4 || Case == 5)
@@ -243,7 +243,7 @@ bool FBattleCoordinatorEnemyActionLifecycleTest::RunTest(const FString& Paramete
 		}
 		if (Case == 6)
 		{
-			World->GetTimerManager().ClearTimer(Battle->DefenseWindowTimerHandle);
+			World->GetTimerManager().ClearTimer(Battle->EnemyAction.HitTimer);
 			AddExpectedError(TEXT("Enemy hit marker/timer missing"), EAutomationExpectedErrorFlags::Contains, 1);
 			TestTrue(TEXT("Normal end provides missing-hit fallback"), Battle->NotifyEnemyActionFinished(Id, false));
 			TestEqual(TEXT("Fallback hit exactly once"), PlayerStats->GetCurrentHealth(), 80.0f);

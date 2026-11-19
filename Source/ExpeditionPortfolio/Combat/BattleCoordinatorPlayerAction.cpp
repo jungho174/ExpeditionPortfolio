@@ -46,7 +46,7 @@ void UBattleCoordinator::NotifyPlayerPreparationFinished(int64 ActionId)
 
 bool UBattleCoordinator::RequestAttackTimingInput()
 {
-	if (bActionInProgress || bTransitionInProgress || CurrentState != EBattleState::PlayerAction || !PlayerAction.Id
+	if (IsBattleOperationBusy() || CurrentState != EBattleState::PlayerAction || !PlayerAction.Id
 		|| PlayerAction.Phase != EPlayerActionPhase::Preparing || !PlayerAction.QTESessionId) { return false; }
 	RefreshAreaPrimaryTarget();
 	if (!HasValidActiveBattle()) { ReturnToExploration(); return false; }
@@ -103,7 +103,7 @@ bool UBattleCoordinator::CanRequestPlayerCommand(const EBattlePlayerCommand Comm
 bool UBattleCoordinator::RequestPlayerCommand(const EBattlePlayerCommand Command)
 {
 	if (bSelectingTarget || bConfirmingTarget || bTargetNotification) { return false; }
-	if (bTransitionInProgress || bActionInProgress)
+	if (IsBattleOperationBusy())
 	{
 		LogRejectedCommand(TEXT("RequestPlayerCommand"), TEXT("another battle operation is in progress"));
 		return false;
@@ -284,7 +284,7 @@ bool UBattleCoordinator::TryStartPlayerPresentation()
 bool UBattleCoordinator::NotifyPlayerActionHit(const int64 ActionId)
 {
 	if (!PlayerAction.Matches(ActionId) || CurrentState != EBattleState::PlayerAction
-		|| bActionInProgress || bTransitionInProgress || !PlayerAction.CanApplyHit())
+		|| IsBattleOperationBusy() || !PlayerAction.CanApplyHit())
 	{
 		return false;
 	}
@@ -330,7 +330,7 @@ bool UBattleCoordinator::NotifyPlayerActionHit(const int64 ActionId)
 bool UBattleCoordinator::NotifyPlayerActionFinished(const int64 ActionId, const bool bInterrupted)
 {
 	if (!PlayerAction.Matches(ActionId) || CurrentState != EBattleState::PlayerAction
-		|| bActionInProgress || bTransitionInProgress)
+		|| IsBattleOperationBusy())
 	{
 		return false;
 	}
@@ -451,14 +451,14 @@ bool UBattleCoordinator::CanRequestAction(UCharacterActionData* Action) const
 
 bool UBattleCoordinator::RequestPlayerAction(UCharacterActionData* Action)
 {
- if (bSelectingTarget || bConfirmingTarget || bTargetNotification || bTransitionInProgress || bActionInProgress || !CanRequestAction(Action)) { return false; }
+ if (bSelectingTarget || bConfirmingTarget || bTargetNotification || IsBattleOperationBusy() || !CanRequestAction(Action)) { return false; }
  PendingAction=Action;
  return ExecutePlayerCommand(EBattlePlayerCommand::CharacterAction);
 }
 
 bool UBattleCoordinator::BeginActionSelection(UCharacterActionData* Action)
 {
- if (bSelectingTarget || bConfirmingTarget || bTargetNotification || bActionInProgress || bTransitionInProgress || !CanRequestAction(Action)) { return false; }
+ if (bSelectingTarget || bConfirmingTarget || bTargetNotification || IsBattleOperationBusy() || !CanRequestAction(Action)) { return false; }
  PendingAction=Action;
  if (BeginCommandSelection(EBattlePlayerCommand::CharacterAction)) { return true; }
  PendingAction=nullptr; return false;
@@ -493,7 +493,7 @@ bool UBattleCoordinator::CanUseItem(UCombatItemData* Item) const
 
 bool UBattleCoordinator::BeginItemSelection(UCombatItemData* Item)
 {
- if (bSelectingTarget || bConfirmingTarget || bTargetNotification || bActionInProgress || bTransitionInProgress || !CanUseItem(Item)) { return false; }
+ if (bSelectingTarget || bConfirmingTarget || bTargetNotification || IsBattleOperationBusy() || !CanUseItem(Item)) { return false; }
  PendingItem=Item;
  if (BeginCommandSelection(EBattlePlayerCommand::UseItem)) { return true; }
  PendingItem=nullptr;return false;

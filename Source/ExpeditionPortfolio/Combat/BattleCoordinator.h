@@ -6,6 +6,7 @@
 #include "Combat/BattleDefense.h"
 #include "Combat/BattlePlayerCommand.h"
 #include "Combat/BattlePlayerActionSession.h"
+#include "Combat/BattleEnemyActionSession.h"
 #include "Combat/BattleState.h"
 #include "Combat/AttackTiming.h"
 #include "Combat/BattleFacing.h"
@@ -159,9 +160,9 @@ public:
 	EBattleDefenseResult GetLastDefenseResult() const { return LastDefenseResult; }
 
 	UFUNCTION(BlueprintPure, Category = "Combat|Pattern")
-	bool HasActiveEnemyPattern() const { return bHasActiveEnemyPattern; }
+	bool HasActiveEnemyPattern() const { return EnemyAction.bHasPattern; }
 
-	// A value copy, never the mutable source asset. Empty ID outside an enemy action.
+	// 타격 시점에 보관한 패턴 사본을 반환하고, 진행 중인 패턴이 없으면 ID를 비운다.
 	UFUNCTION(BlueprintPure, Category = "Combat|Pattern")
 	FEnemyAttackPatternSnapshot GetActiveEnemyPattern() const;
 
@@ -180,13 +181,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Combat|Counter") bool NotifyCounterFinished(int64 ActionId, bool bInterrupted=false) { return NotifyParryCounterFinished(ActionId,bInterrupted); }
 	bool NotifyEnemyActionHit(int64 ActionId, int32 HitIndex=0);
 	void NotifyEnemyAttackStarted(int64 ActionId);
-	UFUNCTION(BlueprintPure,Category="Combat|Pattern") int32 GetEnemyHitIndex() const { return EnemyHitIndex; }
-	UFUNCTION(BlueprintPure,Category="Combat|Pattern") int32 GetEnemyHitCount() const { return ActiveEnemyPattern.Hits.Num(); }
+	UFUNCTION(BlueprintPure,Category="Combat|Pattern") int32 GetEnemyHitIndex() const { return EnemyAction.HitIndex; }
+	UFUNCTION(BlueprintPure,Category="Combat|Pattern") int32 GetEnemyHitCount() const { return EnemyAction.Pattern.Hits.Num(); }
 	bool NotifyEnemyActionFinished(int64 ActionId, bool bInterrupted);
 	bool NotifyParryCounterHit(int64 ActionId);
 	bool NotifyParryCounterFinished(int64 ActionId, bool bInterrupted);
 	UFUNCTION(BlueprintPure, Category = "Combat|Defense")
-	bool IsParryCounterActive() const { return bParryCounterActive; }
+	bool IsParryCounterActive() const { return EnemyAction.bCounterActive; }
 
 	UFUNCTION(BlueprintPure, Category = "Combat|Timing")
 	float GetEnemyHitTimeRemaining() const;
@@ -233,7 +234,6 @@ private:
  void StopCounterPresentation();
  bool BeginCharacterCounter();
  UPROPERTY(Transient) TObjectPtr<UCharacterActionData> PendingAction;
- UPROPERTY(Transient) TObjectPtr<UCharacterActionData> ActiveCounterAction;
  TMap<TWeakObjectPtr<AActor>,TMap<FName,int32>> ActionUses;
  TMap<TWeakObjectPtr<AActor>,TMap<FName,int32>> EntryActionUses;
 	bool ApplyCombatEffect(UCombatantComponent* Target, float Amount, ECombatNumberKind Kind);
@@ -332,18 +332,20 @@ private:
 	bool ExecutePlayerCommand(EBattlePlayerCommand Command);
 	void HandlePlayerActionTimeout(int64 ActionId);
 	void ClearPlayerAction();
+	UPROPERTY(Transient) FBattleEnemyActionSession EnemyAction;
+	bool IsBattleOperationBusy() const { return bTransitionInProgress || bActionInProgress; }
 	bool StartEnemyTelegraph();
 	void SelectEnemyPattern();
 	void ClearEnemyPattern();
-	void HandleEnemyTelegraphFinished();
-	void OpenEnemyDefenseWindow();
+	void HandleEnemyTelegraphFinished(int64 ExpectedBattleId);
+	void OpenEnemyDefenseWindow(int64 ActionId, int32 HitIndex);
 	void ScheduleEnemyHit();
 	bool StartParryCounter();
 	void HandleEnemyActionTimeout(int64 ActionId);
 	bool FinishEnemyAction();
 	void HandleParryCounterTimeout(int64 ActionId);
 	void ClearEnemyAction();
-	void HandleDefenseWindowExpired();
+	void HandleDefenseWindowExpired(int64 ActionId, int32 HitIndex);
 	bool ResolveDefenseOutcome(EBattleDefenseResult Result);
 	void SetDefenseResult(EBattleDefenseResult Result);
 	void ClearBattleTimers();
@@ -360,8 +362,6 @@ private:
 	FOnBattleStateChanged BattleStateChanged;
 	FOnDefenseResultChanged DefenseResultChanged;
 	FOnDefenseCommandAccepted DefenseCommandAccepted;
-	FTimerHandle EnemyTelegraphTimerHandle;
-	FTimerHandle DefenseWindowTimerHandle;
 	EBattleDefenseResult LastDefenseResult = EBattleDefenseResult::None;
 	bool bTransitionInProgress = false;
 	bool bActionInProgress = false;
@@ -374,31 +374,12 @@ private:
 	FDelegateHandle QTEChangedHandle;
 	FOnPlayerPhaseChanged PlayerPhaseChanged;
 	FSimpleMulticastDelegate AttackTimingChanged;
-	UPROPERTY(Transient) FEnemyAttackPatternSnapshot ActiveEnemyPattern;
-	bool bHasActiveEnemyPattern = false;
 	FRandomStream PatternRandom;
 	int32 RemainingPotions = 0;
 	float PotionHealing = 30.0f;
 	float MeleeDamage = 15.0f;
 	int64 NextPlayerActionId = 0;
-	FTimerHandle EnemyWindowOpenTimerHandle;
-	FTimerHandle EnemyActionTimeoutTimerHandle;
-	TWeakObjectPtr<UEnemyAttackPresentationComponent> EnemyPresentation;
 	int64 NextEnemyActionId = 0;
-	int64 ActiveEnemyActionId = 0;
-	EBattleDefenseResult PendingDefenseResult = EBattleDefenseResult::None;
-	bool bEnemyHitResolved = false;
-	bool bEnemyHitNotifyReceived = false;
-	bool bWaitingForEnemyAnimation = false;
-	bool bParryCounterActive = false;
-	bool bParryCounterHitApplied = false;
-	float PendingCounterDamage = 15.0f;
-	TWeakObjectPtr<UActorComponent> CounterPresentation;
-	int32 EnemyHitIndex = 0;
-	bool bAllEnemyHitsParried = true;
-	bool bEnemyAttackStarted = false;
-	float EnemyAttackStartedAt = 0;
-	FTimerHandle ParryCounterTimerHandle;
 
 	static constexpr float PlayerBasicAttackDamage = 25.0f;
 	static constexpr float PlayerPowerStrikeDamage = 40.0f;
